@@ -83,6 +83,7 @@ test("persists settings, reuses them, and resets them", async () => {
 test("rejects a missing workspace directory", async () => {
   await assert.rejects(
     resolveConfig({
+      configPath: join(tmpdir(), `workspace-tools-missing-config-${process.pid}.json`),
       env: { WORKSPACE_ROOT: join(tmpdir(), "does-not-exist-workspace-tools") },
       prompt: async () => { throw new Error("prompt must not run"); },
     }),

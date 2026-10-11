@@ -84,10 +84,10 @@ The runtime is tuned for **1,000 concurrently initialized trusted sessions** on 
 Reproduce the local staged benchmark after building:
 
 ```bash
-node /tmp/workspace-tools-mcp-load.mjs 1000 32 2
+npm run benchmark -- --sessions 1000 --ramp 32 --seconds 30 --active 100 --shell 8
 ```
 
-The disposable probe reports initialized sessions, successful reads, failures by cause, initialization time, read throughput, p50/p95/p99 latency, event-loop p99 delay, RSS, and health status. Treat its output as machine-specific evidence, not a universal capacity claim.
+The benchmark runs the server and load generator in separate processes. It reports initialized sessions, failures by cause, initialization time, throughput, p50/p95/p99 latency, server-only event-loop delay and memory, and health. No requests are retried automatically. Treat its output as machine-specific evidence, not a universal capacity claim.
 
 ## OpenAI Secure MCP Tunnel
 

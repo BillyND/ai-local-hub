@@ -86,8 +86,10 @@ function writeError(
 
 export async function startMcpServer(
   workspaceRoot: string,
-  options: McpServerOptions = {},
+  portOrOptions: number | McpServerOptions = {},
 ): Promise<McpHandle> {
+  const options =
+    typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions;
   const maxSessions = options.maxSessions ?? 1_024;
   const idleTimeoutMs = options.sessionIdleTimeoutMs ?? 10 * 60_000;
   if (!Number.isSafeInteger(maxSessions) || maxSessions < 1)

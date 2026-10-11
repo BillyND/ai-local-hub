@@ -1,7 +1,6 @@
 interface Waiter {
   signal: AbortSignal;
   resolve: (release: () => void) => void;
-  reject: (reason: unknown) => void;
   onAbort: () => void;
 }
 
@@ -36,7 +35,6 @@ class Slots {
       const waiter: Waiter = {
         signal,
         resolve,
-        reject,
         onAbort: () => {
           this.queue.delete(waiter);
           reject(signal.reason);
