@@ -1,17 +1,28 @@
-import { isCancel, password, text } from "@clack/prompts";
 import {
   chmod,
   mkdir,
   readFile,
   readdir,
-  realpath,
   rename,
   rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+
+export interface InstanceConfig {
+  id: string;
+  name: string;
+  workspaceRoot: string;
+  tunnelId: string;
+  apiKey: string;
+}
+
+export interface StoredConfig {
+  version: 2;
+  cacheDir: string;
+  instances: InstanceConfig[];
+}
 
 const DEFAULT_CONFIG_PATH = join(
   homedir(),
@@ -19,41 +30,9 @@ const DEFAULT_CONFIG_PATH = join(
   "workspace-tools-mcp",
   "config.json",
 );
+const DEFAULT_CACHE_DIR = join(homedir(), ".cache", "workspace-tools-mcp");
 
-interface PersistedConfig {
-  version: 1;
-  workspaceRoot: string;
-  openaiTunnelId: string;
-  openaiApiKey: string;
-  cacheDir: string;
-}
-
-export interface Config {
-  workspaceRoot: string;
-  tunnelId: string;
-  apiKey: string;
-  cacheDir: string;
-  localOnly: boolean;
-  configPath: string;
-  loadedFromDisk: boolean;
-}
-
-export interface ConfigOptions {
-  env?: NodeJS.ProcessEnv;
-  cwd?: string;
-  localOnly?: boolean;
-  reset?: boolean;
-  configPath?: string;
-  persist?: boolean;
-  signal?: AbortSignal;
-  prompt?: (
-    label: string,
-    secret: boolean,
-    defaultValue?: string,
-  ) => Promise<string>;
-}
-
-function expandHome(value: string): string {
+export function expandHome(value: string): string {
   return value === "~"
     ? homedir()
     : value.startsWith("~/") || value.startsWith("~\\")
@@ -61,74 +40,108 @@ function expandHome(value: string): string {
       : value;
 }
 
-async function loadConfig(path: string): Promise<PersistedConfig | undefined> {
+export function resolveConfigPath(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
+  return resolve(
+    cwd,
+    expandHome(env.WORKSPACE_TOOLS_CONFIG_FILE?.trim() || DEFAULT_CONFIG_PATH),
+  );
+}
+
+/** Environment wins over the saved cache directory so CI and tests can isolate downloads. */
+export function resolveCacheDir(
+  saved: StoredConfig,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
+  return resolve(
+    cwd,
+    expandHome(env.WORKSPACE_TOOLS_CACHE_DIR?.trim() || saved.cacheDir),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function invalid(path: string): Error {
+  return new Error(`Invalid saved configuration: ${path}. Run with --reset.`);
+}
+
+function parseInstance(value: unknown, path: string): InstanceConfig {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.name !== "string" ||
+    typeof value.workspaceRoot !== "string" ||
+    typeof value.tunnelId !== "string" ||
+    typeof value.apiKey !== "string"
+  )
+    throw invalid(path);
+  const { id, name, workspaceRoot, tunnelId, apiKey } = value;
+  return { id, name, workspaceRoot, tunnelId, apiKey };
+}
+
+function parseStored(parsed: unknown, path: string): StoredConfig {
+  if (!isRecord(parsed) || typeof parsed.cacheDir !== "string")
+    throw invalid(path);
+  if (parsed.version === 1) {
+    // Single-instance files from earlier releases become one instance named "default".
+    const { workspaceRoot, openaiTunnelId, openaiApiKey } = parsed;
+    if (
+      typeof workspaceRoot !== "string" ||
+      typeof openaiTunnelId !== "string" ||
+      typeof openaiApiKey !== "string"
+    )
+      throw invalid(path);
+    const migrated =
+      openaiTunnelId && openaiApiKey
+        ? [
+            {
+              id: "default",
+              name: "default",
+              workspaceRoot,
+              tunnelId: openaiTunnelId,
+              apiKey: openaiApiKey,
+            },
+          ]
+        : [];
+    return { version: 2, cacheDir: parsed.cacheDir, instances: migrated };
+  }
+  if (parsed.version !== 2 || !Array.isArray(parsed.instances))
+    throw invalid(path);
+  return {
+    version: 2,
+    cacheDir: parsed.cacheDir,
+    instances: parsed.instances.map((entry) => parseInstance(entry, path)),
+  };
+}
+
+export async function loadConfig(path: string): Promise<StoredConfig> {
   let contents: string;
   try {
     contents = await readFile(path, "utf8");
   } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )
-      return undefined;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return { version: 2, cacheDir: DEFAULT_CACHE_DIR, instances: [] };
     throw error;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(contents);
   } catch {
-    throw new Error(`Invalid saved configuration: ${path}. Run with --reset.`);
+    throw invalid(path);
   }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    !("version" in parsed) ||
-    parsed.version !== 1 ||
-    !("workspaceRoot" in parsed) ||
-    typeof parsed.workspaceRoot !== "string" ||
-    !("openaiTunnelId" in parsed) ||
-    typeof parsed.openaiTunnelId !== "string" ||
-    !("openaiApiKey" in parsed) ||
-    typeof parsed.openaiApiKey !== "string" ||
-    !("cacheDir" in parsed) ||
-    typeof parsed.cacheDir !== "string"
-  ) {
-    throw new Error(`Invalid saved configuration: ${path}. Run with --reset.`);
-  }
+  const config = parseStored(parsed, path);
   await chmod(path, 0o600);
-  return parsed as PersistedConfig;
+  return config;
 }
 
-async function removeSavedConfigArtifacts(path: string): Promise<void> {
-  await rm(path, { force: true });
-  try {
-    const prefix = `${basename(path)}.`;
-    for (const name of await readdir(dirname(path))) {
-      if (
-        name.startsWith(prefix) &&
-        name.endsWith(".tmp") &&
-        /^\d+$/.test(name.slice(prefix.length, -4))
-      )
-        await rm(join(dirname(path), name), { force: true });
-    }
-  } catch (error: unknown) {
-    if (
-      !(
-        error &&
-        typeof error === "object" &&
-        "code" in error &&
-        error.code === "ENOENT"
-      )
-    )
-      throw error;
-  }
-}
-
-async function saveConfig(
+export async function saveConfig(
   path: string,
-  config: PersistedConfig,
+  config: StoredConfig,
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.${process.pid}.tmp`;
@@ -145,136 +158,19 @@ async function saveConfig(
   }
 }
 
-async function promptValue(
-  options: ConfigOptions,
-  label: string,
-  secret: boolean,
-  defaultValue?: string,
-): Promise<string> {
-  options.signal?.throwIfAborted();
-  if (options.prompt)
-    return (await options.prompt(label, secret, defaultValue)).trim();
-  if (!process.stdin.isTTY || !process.stdout.isTTY)
-    throw new Error(
-      `${label} is missing. Set it in the environment or use an interactive terminal.`,
-    );
-  const common = {
-    message: label,
-    signal: options.signal,
-    validate: (value: string | undefined) =>
-      value?.trim() || defaultValue ? undefined : "This value is required.",
-  };
-  const answer = secret
-    ? await password({ ...common, mask: "*" })
-    : await text({
-        ...common,
-        ...(defaultValue ? { defaultValue, placeholder: defaultValue } : {}),
-      });
-  if (isCancel(answer)) throw new Error("Configuration cancelled.");
-  options.signal?.throwIfAborted();
-  return answer.trim();
-}
-
-export async function resolveConfig(
-  options: ConfigOptions = {},
-): Promise<Config> {
-  const env = options.env ?? process.env;
-  const cwd = options.cwd ?? process.cwd();
-  const localOnly = options.localOnly ?? false;
-  const configPath = resolve(
-    cwd,
-    expandHome(
-      options.configPath ||
-        env.WORKSPACE_TOOLS_CONFIG_FILE ||
-        DEFAULT_CONFIG_PATH,
-    ),
-  );
-  const hasRuntimeOverrides = [
-    "WORKSPACE_ROOT",
-    "OPENAI_TUNNEL_ID",
-    "OPENAI_API_KEY",
-    "WORKSPACE_TOOLS_CACHE_DIR",
-  ].some((name) => Boolean(env[name]?.trim()));
-  if (options.reset) await removeSavedConfigArtifacts(configPath);
-  const saved = await loadConfig(configPath);
-  const shouldPersist = options.persist ?? !hasRuntimeOverrides;
-  const required = async (
-    envName: string,
-    label: string,
-    secret: boolean,
-    savedValue?: string,
-    defaultValue?: string,
-  ): Promise<string> => {
-    options.signal?.throwIfAborted();
-    const value =
-      env[envName]?.trim() ||
-      savedValue ||
-      (await promptValue(options, label, secret, defaultValue));
-    if (!value) throw new Error(`${label} is required.`);
-    return value;
-  };
-  const workspaceValue = expandHome(
-    await required(
-      "WORKSPACE_ROOT",
-      "Workspace folder",
-      false,
-      saved?.workspaceRoot,
-      cwd,
-    ),
-  );
-  const workspacePath = isAbsolute(workspaceValue)
-    ? workspaceValue
-    : resolve(cwd, workspaceValue);
-  let workspaceRoot: string;
+export async function removeSavedConfig(path: string): Promise<void> {
+  await rm(path, { force: true });
   try {
-    if (!(await stat(workspacePath)).isDirectory())
-      throw new Error("not a directory");
-    workspaceRoot = await realpath(workspacePath);
-  } catch {
-    throw new Error(
-      `Workspace folder must be an existing directory: ${workspacePath}`,
-    );
+    const prefix = `${basename(path)}.`;
+    for (const name of await readdir(dirname(path))) {
+      if (
+        name.startsWith(prefix) &&
+        name.endsWith(".tmp") &&
+        /^\d+$/.test(name.slice(prefix.length, -4))
+      )
+        await rm(join(dirname(path), name), { force: true });
+    }
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  const tunnelId = localOnly
-    ? ""
-    : await required(
-        "OPENAI_TUNNEL_ID",
-        "OpenAI Tunnel ID",
-        false,
-        saved?.openaiTunnelId,
-      );
-  const apiKey = localOnly
-    ? ""
-    : await required(
-        "OPENAI_API_KEY",
-        "OpenAI API key",
-        true,
-        saved?.openaiApiKey,
-      );
-  const cacheDir = resolve(
-    cwd,
-    expandHome(
-      env.WORKSPACE_TOOLS_CACHE_DIR?.trim() ||
-        saved?.cacheDir ||
-        join(homedir(), ".cache", "workspace-tools-mcp"),
-    ),
-  );
-  options.signal?.throwIfAborted();
-  if (shouldPersist)
-    await saveConfig(configPath, {
-      version: 1,
-      workspaceRoot,
-      openaiTunnelId: localOnly ? (saved?.openaiTunnelId ?? "") : tunnelId,
-      openaiApiKey: localOnly ? (saved?.openaiApiKey ?? "") : apiKey,
-      cacheDir,
-    });
-  return {
-    workspaceRoot,
-    tunnelId,
-    apiKey,
-    cacheDir,
-    localOnly,
-    configPath,
-    loadedFromDisk: Boolean(saved),
-  };
 }

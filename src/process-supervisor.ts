@@ -65,7 +65,7 @@ function redact(text: string, secrets: readonly string[]): string {
   return result;
 }
 
-function signalGroup(pid: number, signal: NodeJS.Signals): void {
+export function signalGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     if (process.platform === "win32") return;
     process.kill(-pid, signal);

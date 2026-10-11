@@ -11,44 +11,47 @@ A local MCP server exposing Pi's built-in coding tools directly to ChatGPT Web a
 ## Install and run
 
 ```bash
-npm install
-npm run build
+npm install     # also installs the web UI dependencies
+npm run build   # compiles the server and builds the web UI into dist/web
 npm start
 ```
 
-On the first run, the CLI asks for:
+`npm start` starts the manager and opens its **web UI** in your browser (the link is also printed in the terminal). Each **instance** has its own name, workspace folder, OpenAI Tunnel ID and API key, and runs as a separate worker process with its own loopback MCP endpoint and tunnel. Use one instance per ChatGPT account/workspace; several can run side by side.
 
-1. **Workspace folder** — an existing directory used as Pi's working directory.
-2. **OpenAI Tunnel ID** — the tunnel to expose the local MCP endpoint.
-3. **OpenAI API key** — the runtime key used by the official tunnel client.
+In the UI you can add, edit and delete instances, start or stop each one (or all), pick the workspace folder with a folder browser, copy the MCP URL, and watch live logs. `Quit` (or Ctrl+C in the terminal) stops every instance and exits. Running `npm start` again while a manager is already running just reopens it.
 
-The values are stored locally in `~/.config/workspace-tools-mcp/config.json`, with a private `0600` file mode. Subsequent launches reuse them without prompting. Use `--reset` to delete the saved settings and run setup again:
+Instances are stored in `~/.config/workspace-tools-mcp/config.json` with a private `0600` file mode, including API keys. API keys are write-only in the UI: they are never sent back to the browser, and logs are redacted. Files from earlier single-instance releases are migrated automatically to one instance named `default`. Editing a running instance saves the new settings but they apply the next time it starts.
 
 ```bash
-npm start -- --reset
+npm start -- --port 4800       # fixed UI port (default 4747; a busy default falls back to a free port)
+npm start -- --no-open         # do not open the browser
+npm start -- --headless        # no UI: start all saved instances, logs on stderr (for services and CI)
+npm start -- --headless --instance work
+npm start -- --local-only      # loopback MCP only, no OpenAI tunnels
+npm start -- --reset           # delete saved settings and exit
 ```
 
-The API key prompt is hidden. The local endpoint is printed as `http://127.0.0.1:<port>/mcp`; it binds only to loopback. Press Ctrl+C for graceful shutdown.
+**The web UI controls instances that give the connected ChatGPT account full shell and filesystem access, so it is locked down:** it binds to `127.0.0.1` only, requires a random per-launch token (the first visit exchanges the link's token for an `HttpOnly`, `SameSite=Strict` cookie), rejects foreign `Host` headers (DNS rebinding) and cross-origin or non-JSON changes, and sends a strict Content-Security-Policy. Anyone who can read the link printed in your terminal can control the manager, so do not share it. Headless mode (`--headless`) has no UI and no listener.
 
-For local diagnostics without OpenAI:
+Each idle worker uses roughly 150 MB of RSS on Node (measured on macOS arm64); plan memory per running instance.
+
+### Developing the UI
+
+The UI lives in `web/` (Vite, React, TypeScript, Tailwind, shadcn/ui). Run the manager with a fixed port and no browser, open the printed link once (it sets the session cookie), then use the Vite dev server, which proxies `/api` to the manager:
 
 ```bash
-npm start -- --local-only
+npm run dev -- --port 4747 --no-open    # terminal 1: manager (tsx), prints the link
+npm run dev:web                          # terminal 2: Vite on http://127.0.0.1:5173
 ```
 
-## Environment overrides
-
-Environment values take precedence over saved settings and stay runtime-only; they do not overwrite or persist the saved API key. This is useful for CI or one-off runs. Use an interactive run, without these overrides, to save new settings.
+## Environment
 
 | Variable | Purpose |
 | --- | --- |
-| `WORKSPACE_ROOT` | Existing directory used as Pi's working directory |
-| `OPENAI_TUNNEL_ID` | OpenAI tunnel ID; required unless local-only |
-| `OPENAI_API_KEY` | OpenAI Secure MCP Tunnel runtime key; required unless local-only |
 | `WORKSPACE_TOOLS_CONFIG_FILE` | Optional saved-config path; defaults to `~/.config/workspace-tools-mcp/config.json` |
-| `WORKSPACE_TOOLS_CACHE_DIR` | Optional cache root; defaults to `~/.cache/workspace-tools-mcp` |
+| `WORKSPACE_TOOLS_CACHE_DIR` | Optional cache root; defaults to the saved `cacheDir`, then `~/.cache/workspace-tools-mcp` |
 
-Export the variables or run `node --env-file=.env dist/index.js`. `.env.example` contains variable names only. Never commit `.env` or credentials.
+The manager passes each worker its workspace, tunnel ID and key through that worker's environment only (never argv) and the worker removes the key from its own environment before any tool runs. The tunnel client is downloaded once by the manager and shared by all workers. Never commit credentials.
 
 ## Tools and permission model
 
@@ -93,10 +96,10 @@ The benchmark runs the server and load generator in separate processes. It repor
 
 1. Open [Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels); create/select a tunnel and associate it with the target ChatGPT workspace.
 2. Create a runtime API key with Tunnels Read + Use permission. Do not use an admin key.
-3. Run `npm start` and enter the workspace, tunnel ID, and key, or export the environment variables.
+3. Run `npm start`, add an instance in the web UI with its workspace, tunnel ID and key, and click Start.
 4. The app verifies local MCP readiness, downloads/caches the official tunnel client, creates a separate runtime profile containing only an environment reference for the key, and starts the tunnel process.
 5. Wait for the printed **OpenAI tunnel ready** state. In [ChatGPT Plugins](https://chatgpt.com/plugins), choose **Add → Add custom MCP server → Tunnel**. Enter the same tunnel ID, choose **No authentication** if available for this intentionally tunnel-only server, review its full permissions, and create the plugin.
-6. Start a new chat and select the plugin. Ask it to list files or edit a disposable fixture. Keep `npm start` running for discovery and calls.
+6. Start a new chat and select the plugin. Ask it to list files or edit a disposable fixture. Keep the manager (or headless process) running for discovery and calls.
 
 Account plan, workspace policy, tunnel associations, and permission restrictions are controlled by OpenAI. Do not bypass them. Tool changes may require **Refresh** in ChatGPT.
 
@@ -128,13 +131,14 @@ A real ChatGPT end-to-end test requires a valid runtime key and tunnel ID. Local
 
 ## Troubleshooting
 
-- **Missing configuration in noninteractive mode:** set all required environment variables; prompts need a TTY.
+- **No instances in headless mode:** run `npm start`, add instances in the web UI, then use `--headless`; it only starts saved ones.
 - **Invalid workspace:** choose an existing directory, not a file.
-- **Want to change credentials:** run `npm start -- --reset` or override with environment variables.
+- **Want to change credentials:** click Edit on the instance (leave the key empty to keep it), or `npm start -- --reset` to start over.
+- **Instance shows error:** select it to see its logs; a worker that exits unexpectedly or a failed tunnel start is reported there. Click Start to try again.
 - **MCP capacity reached:** wait for active sessions/tools to finish, close unused client sessions, or tune deployment options in the embedding API. A `429`/retryable tool response is intentional backpressure.
 - **Checksum failure:** the download is refused; retry via the official release channel. Do not bypass checksum verification.
 - **Tunnel readiness timeout:** check the redacted diagnostics, key's Tunnels Read + Use permissions, and workspace associations. Startup is not treated as ready based only on process creation.
 - **ChatGPT cannot scan:** keep the app running and choose Tunnel, not the localhost URL. Check OpenAI workspace permissions.
 - **Tool metadata changed:** refresh the plugin and start a new chat.
 - **Find/grep unavailable:** Pi may need to acquire fd/ripgrep on first use; check outbound networking and Pi's tool cache.
-- **Ctrl+C:** the app stops the tunnel and aborts active tools before closing MCP and removing runtime files.
+- **Quit:** the Quit button or Ctrl+C stops every worker, which stops its tunnel and aborts active tools before closing MCP and removing runtime files.

@@ -3,7 +3,6 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -11,6 +10,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createPiTools } from "./pi-tools.js";
 import { getPiToolNames, registerPiTools } from "./pi-tool-adapter.js";
 import { ToolCapacity } from "./tool-capacity.js";
+import { readPackageVersion } from "./version.js";
 
 interface Session {
   server: McpServer;
@@ -104,18 +104,7 @@ export async function startMcpServer(
     options.maxQueuedFileTools,
     options.maxQueuedProcessTools,
   );
-  const packageJson: unknown = JSON.parse(
-    await readFile(new URL("../package.json", import.meta.url), "utf8"),
-  );
-  if (
-    !packageJson ||
-    typeof packageJson !== "object" ||
-    !("version" in packageJson) ||
-    typeof packageJson.version !== "string"
-  ) {
-    throw new Error("package.json is missing its version.");
-  }
-  const version = packageJson.version;
+  const version = await readPackageVersion();
   const tools = createPiTools(workspaceRoot);
   const shutdown = new AbortController();
   const sessions = new Map<string, Session>();
