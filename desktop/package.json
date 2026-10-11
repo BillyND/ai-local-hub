@@ -5,7 +5,7 @@
   "description": "Tauri desktop shell for AI Local Hub",
   "scripts": {
     "tauri": "tauri",
-    "stage": "node ../scripts/stage-desktop.mjs",
+    "stage": "node ../scripts/stage-rust-desktop.mjs",
     "dev": "npm run stage && tauri dev",
     "build": "npm run stage && tauri build"
   },

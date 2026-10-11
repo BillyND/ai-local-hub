@@ -21,7 +21,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const ATTACH_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const ATTACH_PROBE_FAILURES: u32 = 2;
 
-/// Owns the embedded manager process (Bun running the same `app.mjs` as `npm start`).
+/// Owns the embedded native Rust manager process.
 #[derive(Default)]
 pub struct ManagerHost {
     child: Mutex<Option<Child>>,
@@ -105,7 +105,7 @@ impl Diagnostics {
     }
 }
 
-/// Windows can hand back verbatim `\\?\C:\...` paths, which Bun and Node resolve poorly.
+/// Windows can hand back verbatim paths that subprocess APIs resolve poorly.
 fn plain(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     if let Some(stripped) = path.to_str().and_then(|p| p.strip_prefix(r"\\?\")) {
@@ -157,36 +157,36 @@ pub fn start(app: AppHandle) {
 fn run(app: &AppHandle) -> Result<(), String> {
     // Tauri installs sidecars next to the main executable on every platform.
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate the app: {e}"))?;
-    let runtime = plain(exe.parent().ok_or("cannot locate the app directory")?.join(
-        if cfg!(windows) {
-            "ai-local-hub-bun.exe"
-        } else {
-            "ai-local-hub-bun"
-        },
-    ));
-    if !runtime.exists() {
+    let bin_dir = exe.parent().ok_or("cannot locate the app directory")?;
+    let manager_bin = plain(bin_dir.join(if cfg!(windows) {
+        "ai-local-hub-manager.exe"
+    } else {
+        "ai-local-hub-manager"
+    }));
+    let worker_bin = plain(bin_dir.join(if cfg!(windows) {
+        "ai-local-hub-runtime.exe"
+    } else {
+        "ai-local-hub-runtime"
+    }));
+    if !manager_bin.is_file() || !worker_bin.is_file() {
         return Err(format!(
-            "embedded runtime is missing: {}",
-            runtime.display()
+            "native Rust manager or worker is missing: {} / {}",
+            manager_bin.display(),
+            worker_bin.display()
         ));
     }
-    let script = plain(
-        app.path()
-            .resolve("app/dist/ai-local-hub.mjs", BaseDirectory::Resource)
-            .map_err(|e| format!("cannot locate the bundled manager: {e}"))?,
-    );
-    // Run from the bundle directory so Bun finds no stray bunfig.toml or .env of the user's.
-    let workdir = script
-        .parent()
-        .ok_or("invalid bundle layout")?
-        .to_path_buf();
-
-    let mut command = Command::new(&runtime);
+    let web_dir = plain(app.path()
+        .resolve("app/dist/web", BaseDirectory::Resource)
+        .map_err(|e| format!("cannot locate the bundled web UI: {e}"))?);
+    if !web_dir.join("index.html").is_file() {
+        return Err(format!("bundled web UI is missing: {}", web_dir.display()));
+    }
+    let mut command = Command::new(&manager_bin);
     command
-        .args(["--no-install", "--no-env-file"])
-        .arg(&script)
         .arg("--desktop")
-        .current_dir(&workdir)
+        .env("AI_LOCAL_HUB_RUNTIME_BIN", &worker_bin)
+        .env("AI_LOCAL_HUB_WEB_DIR", &web_dir)
+        .current_dir(&web_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

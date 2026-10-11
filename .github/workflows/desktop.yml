@@ -1,6 +1,6 @@
 name: desktop
 
-# For now, publish macOS Apple Silicon and Intel installers only.
+# Native Rust MCP manager + worker; macOS Apple Silicon and Intel installers.
 # Manual runs upload artifacts; a v* tag builds and attaches DMGs to a draft GitHub release.
 # Publish the draft after checking both assets.
 on:
@@ -17,15 +17,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './rust/runtime -> target'
       - run: npm ci
       - run: npm run build
       - run: npm test
-      # The desktop app ships Bun, so the stdin-shutdown and attach behavior must hold there too.
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.3
-      - name: Desktop-mode and bundle tests on Bun
-        run: WTM_TEST_RUNTIME="$(which bun)" npx tsx --test tests/manager-desktop-mode.test.ts tests/bundle-smoke.test.ts
 
   bundle:
     needs: verify
@@ -37,7 +35,7 @@ jobs:
         include:
           - platform: macos-latest
             target: aarch64-apple-darwin
-          - platform: macos-latest # cross-compiled; the matching Bun runtime is staged by target
+          - platform: macos-latest # cross-compiled native Rust binaries for Intel
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.platform }}
     steps:
@@ -61,16 +59,10 @@ jobs:
           npm ci
           npm run build
 
-      - name: Stage the Bun runtime and app resources
+      - name: Stage native Rust manager, worker and React assets
         run: |
           npm --prefix desktop ci
-          node scripts/stage-desktop.mjs --target ${{ matrix.target }} --skip-stale-check
-
-      # Runs the staged Bun + bundled app exactly as the shell does. The x86_64 macOS build is
-      # cross-compiled on an arm64 runner, so its runtime is not executed here.
-      - name: Smoke test the embedded runtime
-        if: matrix.target != 'x86_64-apple-darwin'
-        run: node scripts/smoke-desktop-runtime.mjs --target ${{ matrix.target }}
+          node scripts/stage-rust-desktop.mjs --target ${{ matrix.target }}
 
       - uses: tauri-apps/tauri-action@v1
         env:

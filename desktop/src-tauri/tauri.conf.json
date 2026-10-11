@@ -30,7 +30,7 @@
     "category": "DeveloperTool",
     "shortDescription": "Local MCP tools for AI clients",
     "longDescription": "Manage local MCP instances that connect AI clients to coding tools and future extensions.",
-    "externalBin": ["binaries/ai-local-hub-bun"],
+    "externalBin": ["binaries/ai-local-hub-manager", "binaries/ai-local-hub-runtime"],
     "resources": { "resources/app/": "app/" },
     "macOS": {
       "minimumSystemVersion": "11.0",

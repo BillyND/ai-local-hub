@@ -15,6 +15,7 @@ plans
 desktop/node_modules/
 desktop/.cache/
 desktop/src-tauri/target/
+rust/runtime/target/
 desktop/src-tauri/gen/
 desktop/src-tauri/binaries/
 desktop/src-tauri/resources/
