@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { resolveConfig } from "../src/config.js";
@@ -63,7 +63,7 @@ test("persists settings, reuses them, and resets them", async () => {
       workspaceRoot: await realpath(root),
       openaiTunnelId: "tunnel_saved",
       openaiApiKey: "sk_saved",
-      cacheDir: join(process.env.HOME ?? "", ".cache", "workspace-tools-mcp"),
+      cacheDir: join(homedir(), ".cache", "workspace-tools-mcp"),
     });
     assert.equal((await stat(configPath)).mode & 0o777, 0o600);
 

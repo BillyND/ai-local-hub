@@ -53,7 +53,8 @@ function safeEnv(apiKey: string): NodeJS.ProcessEnv {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  env.OPENAI_API_KEY = apiKey;
+  // The official tunnel-client sample/profile contract uses this name internally.
+  env.CONTROL_PLANE_API_KEY = apiKey;
   return env;
 }
 function logProcessFailure(label: string, exit: ProcessExit): Error {
@@ -115,7 +116,7 @@ export async function startTunnel(
       "--profile",
       profile,
       "--control-plane.api-key",
-      "env:OPENAI_API_KEY",
+      "env:CONTROL_PLANE_API_KEY",
       "--health.listen-addr",
       "127.0.0.1:0",
       "--health.url-file",

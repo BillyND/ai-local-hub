@@ -10,10 +10,25 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createPiTools } from "./pi-tools.js";
 import { getPiToolNames, registerPiTools } from "./pi-tool-adapter.js";
+import { ToolCapacity } from "./tool-capacity.js";
 
 interface Session {
   server: McpServer;
   transport: StreamableHTTPServerTransport;
+  controller: AbortController;
+  activeResponses: number;
+  activeTools: number;
+  lastActivity: number;
+}
+
+export interface McpServerOptions {
+  port?: number;
+  maxSessions?: number;
+  sessionIdleTimeoutMs?: number;
+  maxFileTools?: number;
+  maxProcessTools?: number;
+  maxQueuedFileTools?: number;
+  maxQueuedProcessTools?: number;
 }
 
 export interface McpHandle {
@@ -22,18 +37,34 @@ export interface McpHandle {
   close(): Promise<void>;
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+const MAX_BUFFERED_BODY_BYTES = 32 * 1024 * 1024;
+const MAX_POST_REQUESTS = 2_048;
+
+class BodyCapacityError extends Error {}
+
+async function readJsonBody(
+  request: IncomingMessage,
+  reserve: (bytes: number) => void,
+  release: (bytes: number) => void,
+): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += bytes.length;
-    if (size > 4 * 1024 * 1024)
-      throw new Error("MCP request body exceeds 4 MiB.");
-    chunks.push(bytes);
+  try {
+    for await (const chunk of request) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (size + bytes.length > MAX_BODY_BYTES)
+        throw new Error("MCP request body exceeds 4 MiB.");
+      reserve(bytes.length);
+      size += bytes.length;
+      chunks.push(bytes);
+    }
+    if (size === 0) return undefined;
+    const body = chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, size);
+    return JSON.parse(body.toString("utf8")) as unknown;
+  } finally {
+    release(size);
   }
-  if (chunks.length === 0) return undefined;
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }
 
 function writeError(
@@ -46,17 +77,32 @@ function writeError(
     return;
   }
   response
-    .writeHead(status, { "Content-Type": "text/plain; charset=utf-8" })
+    .writeHead(status, {
+      "Content-Type": "text/plain; charset=utf-8",
+      ...(status === 429 ? { "Retry-After": "1" } : {}),
+    })
     .end(message);
 }
 
 export async function startMcpServer(
   workspaceRoot: string,
-  port = 0,
+  options: McpServerOptions = {},
 ): Promise<McpHandle> {
-  const packageJson = JSON.parse(
+  const maxSessions = options.maxSessions ?? 1_024;
+  const idleTimeoutMs = options.sessionIdleTimeoutMs ?? 10 * 60_000;
+  if (!Number.isSafeInteger(maxSessions) || maxSessions < 1)
+    throw new Error("maxSessions must be a positive safe integer.");
+  if (!Number.isSafeInteger(idleTimeoutMs) || idleTimeoutMs < 1)
+    throw new Error("sessionIdleTimeoutMs must be a positive safe integer.");
+  const capacity = new ToolCapacity(
+    options.maxFileTools,
+    options.maxProcessTools,
+    options.maxQueuedFileTools,
+    options.maxQueuedProcessTools,
+  );
+  const packageJson: unknown = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
-  ) as unknown;
+  );
   if (
     !packageJson ||
     typeof packageJson !== "object" ||
@@ -70,15 +116,142 @@ export async function startMcpServer(
   const shutdown = new AbortController();
   const sessions = new Map<string, Session>();
   const requests = new Set<Promise<void>>();
+  let pendingSessions = 0;
+  let activePosts = 0;
+  let bufferedBodyBytes = 0;
   let closing = false;
   const http = createServer((request, response) => {
     const execution = handleRequest(request, response)
-      .catch(() => {
-        writeError(response, 500, "MCP transport failed");
-      })
+      .catch(() => writeError(response, 500, "MCP transport failed"))
       .finally(() => requests.delete(execution));
     requests.add(execution);
   });
+  // These apply to receiving requests/idle sockets, not tool execution deadlines.
+  http.keepAliveTimeout = 60_000;
+  http.headersTimeout = 65_000;
+  http.requestTimeout = 300_000;
+  http.maxConnections = Math.max(maxSessions * 4, 1_024);
+
+  async function removeSession(id: string): Promise<void> {
+    const session = sessions.get(id);
+    if (!session) return;
+    sessions.delete(id);
+    session.controller.abort(new Error("MCP session closed."));
+    await session.server.close();
+  }
+
+  function trackResponse(session: Session, response: ServerResponse): void {
+    session.lastActivity = Date.now();
+    session.activeResponses += 1;
+    let finished = false;
+    const finish = (): void => {
+      if (finished) return;
+      finished = true;
+      response.removeListener("finish", finish);
+      response.removeListener("close", finish);
+      session.activeResponses -= 1;
+      session.lastActivity = Date.now();
+    };
+    response.once("finish", finish);
+    response.once("close", finish);
+  }
+
+  async function routeMcp(
+    request: IncomingMessage,
+    response: ServerResponse,
+    body: unknown,
+  ): Promise<void> {
+    const sessionId = request.headers["mcp-session-id"];
+    const session =
+      typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
+    if (typeof sessionId === "string" && !session) {
+      writeError(response, 404, "MCP session not found.");
+      return;
+    }
+    if (session) {
+      trackResponse(session, response);
+      await session.transport.handleRequest(request, response, body);
+      return;
+    }
+    if (request.method !== "POST") {
+      writeError(
+        response,
+        request.method === "GET" || request.method === "DELETE" ? 400 : 405,
+        "MCP session ID is required.",
+      );
+      return;
+    }
+    if (!isInitializeRequest(body)) {
+      writeError(response, 400, "Missing MCP session.");
+      return;
+    }
+    if (sessions.size + pendingSessions >= maxSessions) {
+      writeError(
+        response,
+        429,
+        "MCP session capacity reached. Retry after a session closes.",
+      );
+      return;
+    }
+    pendingSessions += 1;
+    let reserved = true;
+    let createdId: string | undefined;
+    let newSession: Session | undefined;
+    let server: McpServer | undefined;
+    try {
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id) => {
+          createdId = id;
+          // Publish before initialize returns: subsequent client requests can route immediately.
+          sessions.set(id, newSession!);
+          pendingSessions -= 1;
+          reserved = false;
+        },
+        onsessionclosed: removeSession,
+      });
+      server = new McpServer(
+        { name: "workspace-tools-mcp", version },
+        {
+          instructions: `Use these Pi SDK tools directly. Relative paths and shell commands start in ${workspaceRoot}. Full process permissions are enabled; the workspace is not a sandbox. Use read before edit; edit requires exact unique oldText replacements in edits[].`,
+        },
+      );
+      newSession = {
+        server,
+        transport,
+        controller: new AbortController(),
+        activeResponses: 0,
+        activeTools: 0,
+        lastActivity: Date.now(),
+      };
+      const current = newSession;
+      registerPiTools(
+        server,
+        tools,
+        AbortSignal.any([shutdown.signal, current.controller.signal]),
+        capacity,
+        {
+          start: () => {
+            current.activeTools += 1;
+          },
+          finish: () => {
+            current.activeTools -= 1;
+            current.lastActivity = Date.now();
+          },
+        },
+      );
+      await server.connect(transport);
+      trackResponse(current, response);
+      await transport.handleRequest(request, response, body);
+      if (!createdId) await server.close();
+    } catch (error) {
+      if (createdId) await removeSession(createdId);
+      else await server?.close();
+      throw error;
+    } finally {
+      if (reserved) pendingSessions -= 1;
+    }
+  }
 
   async function handleRequest(
     request: IncomingMessage,
@@ -108,107 +281,109 @@ export async function startMcpServer(
       writeError(response, 404, "Not found");
       return;
     }
-    let body: unknown;
-    if (request.method === "POST") {
+    if (request.method !== "POST") {
+      await routeMcp(request, response, undefined);
+      return;
+    }
+    if (activePosts >= MAX_POST_REQUESTS) {
+      writeError(response, 429, "MCP request capacity reached.");
+      return;
+    }
+    activePosts += 1;
+    try {
+      let body: unknown;
       try {
-        body = await readJsonBody(request);
-      } catch (error: unknown) {
+        body = await readJsonBody(
+          request,
+          (bytes) => {
+            if (bufferedBodyBytes + bytes > MAX_BUFFERED_BODY_BYTES)
+              throw new BodyCapacityError();
+            bufferedBodyBytes += bytes;
+          },
+          (bytes) => {
+            bufferedBodyBytes -= bytes;
+          },
+        );
+      } catch (error) {
         writeError(
           response,
-          400,
-          error instanceof SyntaxError
-            ? "Invalid JSON body"
-            : "Invalid MCP request body",
+          error instanceof BodyCapacityError ? 429 : 400,
+          error instanceof BodyCapacityError
+            ? "MCP request body capacity reached."
+            : error instanceof SyntaxError
+              ? "Invalid JSON body"
+              : "Invalid MCP request body",
         );
         return;
       }
+      await routeMcp(request, response, body);
+    } finally {
+      activePosts -= 1;
     }
-    const sessionId = request.headers["mcp-session-id"];
-    const session =
-      typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
-    if (typeof sessionId === "string" && !session) {
-      writeError(response, 404, "MCP session not found.");
-      return;
-    }
-    if (session) {
-      await session.transport.handleRequest(request, response, body);
-      return;
-    }
-    if (request.method === "POST") {
-      if (!isInitializeRequest(body)) {
-        writeError(response, 400, "Missing MCP session.");
-        return;
-      }
-      let createdSessionId: string | undefined;
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (id) => {
-          createdSessionId = id;
-        },
-        onsessionclosed: async (id) => {
-          const existing = sessions.get(id);
-          sessions.delete(id);
-          if (existing) await existing.server.close();
-        },
-      });
-      const server = new McpServer(
-        { name: "workspace-tools-mcp", version },
-        {
-          instructions: `Use these Pi SDK tools directly. Relative paths and shell commands start in ${workspaceRoot}. Full process permissions are enabled; the workspace is not a sandbox. Use read before edit; edit requires exact unique oldText replacements in edits[].`,
-        },
-      );
-      registerPiTools(server, tools, shutdown.signal);
-      await server.connect(transport);
-      await transport.handleRequest(request, response, body);
-      if (createdSessionId)
-        sessions.set(createdSessionId, { server, transport });
-      return;
-    }
-    if (request.method === "GET" || request.method === "DELETE") {
-      writeError(response, 400, "MCP session ID is required.");
-      return;
-    }
-    writeError(response, 405, "Method not allowed");
   }
 
   await new Promise<void>((resolve, reject) => {
     http.once("error", reject);
-    http.listen(port, "127.0.0.1", () => {
-      http.removeListener("error", reject);
-      resolve();
-    });
+    http.listen(
+      { port: options.port ?? 0, host: "127.0.0.1", backlog: 2_048 },
+      () => {
+        http.removeListener("error", reject);
+        resolve();
+      },
+    );
   });
+  const sweep = setInterval(
+    () => {
+      const now = Date.now();
+      for (const [id, session] of sessions) {
+        if (
+          session.activeResponses === 0 &&
+          session.activeTools === 0 &&
+          now - session.lastActivity >= idleTimeoutMs
+        ) {
+          void removeSession(id).catch(() => undefined);
+        }
+      }
+    },
+    Math.min(30_000, idleTimeoutMs),
+  );
+  sweep.unref();
   const address = http.address();
   if (!address || typeof address === "string")
     throw new Error("MCP listener has no TCP address.");
   const url = `http://127.0.0.1:${address.port}/mcp`;
-  const health = await fetch(url.replace("/mcp", "/healthz"));
-  if (!health.ok) throw new Error("MCP health check failed.");
   let closePromise: Promise<void> | undefined;
-  return {
-    url,
-    tools: getPiToolNames(tools),
-    close() {
-      closePromise ??= (async () => {
-        closing = true;
-        shutdown.abort(new Error("MCP server is shutting down."));
-        http.closeAllConnections();
+  const close = (): Promise<void> => {
+    closePromise ??= (async () => {
+      closing = true;
+      clearInterval(sweep);
+      shutdown.abort(new Error("MCP server is shutting down."));
+      const closed = new Promise<void>((resolve, reject) =>
+        http.close((error) => (error ? reject(error) : resolve())),
+      );
+      http.closeAllConnections();
+      await Promise.allSettled([...sessions.keys()].map(removeSession));
+      let timer: NodeJS.Timeout | undefined;
+      try {
         await Promise.race([
           Promise.allSettled([...requests]),
-          new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-        ]);
-        await Promise.allSettled(
-          [...sessions.values()].map(async ({ server, transport }) => {
-            await transport.close();
-            await server.close();
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, 2_000);
           }),
-        );
-        sessions.clear();
-        await new Promise<void>((resolve, reject) =>
-          http.close((error) => (error ? reject(error) : resolve())),
-        );
-      })();
-      return closePromise;
-    },
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      await closed;
+    })();
+    return closePromise;
   };
+  try {
+    const health = await fetch(url.replace("/mcp", "/healthz"));
+    if (!health.ok) throw new Error("MCP health check failed.");
+  } catch (error) {
+    await close();
+    throw error;
+  }
+  return { url, tools: getPiToolNames(tools), close };
 }

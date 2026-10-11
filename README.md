@@ -71,6 +71,24 @@ Read-only annotations apply to `read`, `grep`, `find`, and `ls`; write/destructi
 
 No separate app authentication is added. Tunnel organization/workspace association is the remote access boundary. Loopback clients on this machine can call the server too.
 
+## High-concurrency behavior
+
+The runtime is tuned for **1,000 concurrently initialized trusted sessions** on one machine under a staged connection ramp. This is a steady-state target for shared-session usage, not a guarantee for 1,000 simultaneous TCP handshakes, long-running builds, or untrusted users.
+
+- Default initialized-session cap: **1,024**. New initialize requests above the cap receive HTTP `429` with `Retry-After: 1` before a new MCP server is allocated.
+- Idle initialized sessions are reclaimed after **10 minutes** when they have no active response or tool call. Clients should close sessions explicitly when finished.
+- File-oriented tools are bounded at **128** active operations; process-heavy tools (`bash`, `powershell`, `grep`, `find`) at **16** active operations, with bounded queues. Saturated tool calls return a retryable MCP error instead of spawning unbounded child processes.
+- Request body buffering is bounded globally; HTTP keep-alive and request timeout settings are explicit. OS listen backlog remains a kernel limit and is measured separately.
+- Every session still shares the same workspace, operating-system account, and full Pi permissions.
+
+Reproduce the local staged benchmark after building:
+
+```bash
+node /tmp/workspace-tools-mcp-load.mjs 1000 32 2
+```
+
+The disposable probe reports initialized sessions, successful reads, failures by cause, initialization time, read throughput, p50/p95/p99 latency, event-loop p99 delay, RSS, and health status. Treat its output as machine-specific evidence, not a universal capacity claim.
+
 ## OpenAI Secure MCP Tunnel
 
 1. Open [Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels); create/select a tunnel and associate it with the target ChatGPT workspace.
@@ -104,7 +122,7 @@ npm test
 npm start -- --local-only
 ```
 
-The suite exercises actual Pi tools over loopback Streamable HTTP, file writes/edits/searches, protocol errors, process cleanup, streamed redaction, verified download/cache reuse, checksum rejection, and saved-config behavior.
+The suite exercises actual Pi tools over loopback Streamable HTTP, file writes/edits/searches, protocol errors, process cleanup, streamed redaction, verified download/cache reuse, checksum rejection, saved-config behavior, session admission, and bounded tool capacity.
 
 A real ChatGPT end-to-end test requires a valid runtime key and tunnel ID. Local smoke does not prove remote connectivity.
 
@@ -113,6 +131,7 @@ A real ChatGPT end-to-end test requires a valid runtime key and tunnel ID. Local
 - **Missing configuration in noninteractive mode:** set all required environment variables; prompts need a TTY.
 - **Invalid workspace:** choose an existing directory, not a file.
 - **Want to change credentials:** run `npm start -- --reset` or override with environment variables.
+- **MCP capacity reached:** wait for active sessions/tools to finish, close unused client sessions, or tune deployment options in the embedding API. A `429`/retryable tool response is intentional backpressure.
 - **Checksum failure:** the download is refused; retry via the official release channel. Do not bypass checksum verification.
 - **Tunnel readiness timeout:** check the redacted diagnostics, key's Tunnels Read + Use permissions, and workspace associations. Startup is not treated as ready based only on process creation.
 - **ChatGPT cannot scan:** keep the app running and choose Tunnel, not the localhost URL. Check OpenAI workspace permissions.

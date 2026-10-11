@@ -18,9 +18,9 @@ import {
 async function withClient<T>(
   fn: (client: Client, root: string) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "pi-tools-mcp-"));
+  const root = await mkdtemp(join(tmpdir(), "workspace-tools-mcp-"));
   const server = await startMcpServer(root);
-  const client = new Client({ name: "pi-tools-mcp-test", version: "1.0.0" });
+  const client = new Client({ name: "workspace-tools-mcp-test", version: "1.0.0" });
   try {
     await client.connect(
       new StreamableHTTPClientTransport(new URL(server.url)),
@@ -32,6 +32,31 @@ async function withClient<T>(
     await rm(root, { recursive: true, force: true });
   }
 }
+
+test("rejects new MCP sessions with retryable overload when capacity is reached", async () => {
+  const root = await mkdtemp(join(tmpdir(), "workspace-tools-mcp-cap-"));
+  const server = await startMcpServer(root, { maxSessions: 1 });
+  const client = new Client({ name: "capacity-test", version: "1.0.0" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+    const response = await fetch(server.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "capacity-test", version: "1.0.0" } },
+      }),
+    });
+    assert.equal(response.status, 429);
+    assert.equal(response.headers.get("retry-after"), "1");
+  } finally {
+    await client.close();
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 function text(result: CallToolResult): string {
   const block = result.content.find((item) => item.type === "text");

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { startTunnel, type TunnelHandle } from "../src/tunnel-client.js";
 
 async function tempDir(): Promise<string> {
-  return await mkdtemp(join(tmpdir(), "pi-tools-tunnel-"));
+  return await mkdtemp(join(tmpdir(), "workspace-tools-tunnel-"));
 }
 
 async function writeFakeTunnelExecutable(
@@ -30,7 +30,7 @@ if (args[0] === 'run' && process.env.CONTROL_PLANE_API_KEY !== 'sk-secret-value'
 appendFileSync(logFile, JSON.stringify({ args }) + '\\n');
 if (args[0] === 'init') {
   mkdirSync(profileDir, { recursive: true });
-  writeFileSync(join(profileDir, 'pi-tools-mcp.yaml'), 'control_plane_api_key: env:CONTROL_PLANE_API_KEY\\n');
+  writeFileSync(join(profileDir, 'workspace-tools-mcp.yaml'), 'control_plane_api_key: env:CONTROL_PLANE_API_KEY\\n');
   process.exit(0);
 }
 if (args[0] === 'run') {
@@ -68,9 +68,9 @@ test("fake tunnel executable fixture: start waits for readyz and keeps API key o
     });
     const ready = await fetch(`${handle.healthUrl}/readyz`);
     assert.equal(ready.status, 200);
-    assert.equal(handle.profile, "pi-tools-mcp");
+    assert.equal(handle.profile, "workspace-tools-mcp");
     const profile = await readFile(
-      join(dir, "runtime", "pi-tools-mcp.yaml"),
+      join(dir, "runtime", "workspace-tools-mcp.yaml"),
       "utf8",
     );
     assert.match(profile, /env:CONTROL_PLANE_API_KEY/);
