@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -54,6 +54,7 @@ test("persists settings, reuses them, and resets them", async () => {
     const first = await resolveConfig({
       cwd: root,
       configPath,
+      persist: true,
       env: { WORKSPACE_ROOT: ".", OPENAI_TUNNEL_ID: "tunnel_saved", OPENAI_API_KEY: "sk_saved" },
       prompt: async () => { throw new Error("prompt must not run"); },
     });
@@ -67,14 +68,22 @@ test("persists settings, reuses them, and resets them", async () => {
     });
     assert.equal((await stat(configPath)).mode & 0o777, 0o600);
 
+    const overridden = await resolveConfig({ cwd: root, configPath, env: { WORKSPACE_ROOT: ".", OPENAI_TUNNEL_ID: "tunnel_override", OPENAI_API_KEY: "sk_override" }, prompt: async () => { throw new Error("prompt must not run"); } });
+    assert.equal(overridden.tunnelId, "tunnel_override");
+    assert.equal(overridden.apiKey, "sk_override");
+    assert.match(await readFile(configPath, "utf8"), /sk_saved/);
+
     const reused = await resolveConfig({ cwd: root, configPath, env: {}, prompt: async () => { throw new Error("prompt must not run"); } });
     assert.equal(reused.loadedFromDisk, true);
     assert.equal(reused.tunnelId, "tunnel_saved");
     assert.equal(reused.apiKey, "sk_saved");
 
-    await resolveConfig({ cwd: root, configPath, reset: true, localOnly: true, env: { WORKSPACE_ROOT: "." }, prompt: async () => { throw new Error("prompt must not run"); } });
+    const temporaryPath = `${configPath}.424242.tmp`;
+    await writeFile(temporaryPath, "sk_saved", { mode: 0o600 });
+    await resolveConfig({ cwd: root, configPath, reset: true, persist: true, localOnly: true, env: { WORKSPACE_ROOT: "." }, prompt: async () => { throw new Error("prompt must not run"); } });
     const reset = await readFile(configPath, "utf8");
     assert.doesNotMatch(reset, /sk_saved/);
+    await assert.rejects(stat(temporaryPath), { code: "ENOENT" });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

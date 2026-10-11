@@ -43,8 +43,8 @@ export interface ConfigOptions {
   cwd?: string;
   localOnly?: boolean;
   reset?: boolean;
-  persist?: boolean;
   configPath?: string;
+  persist?: boolean;
   signal?: AbortSignal;
   prompt?: (
     label: string,
@@ -106,7 +106,11 @@ async function removeSavedConfigArtifacts(path: string): Promise<void> {
   try {
     const prefix = `${basename(path)}.`;
     for (const name of await readdir(dirname(path))) {
-      if (name.startsWith(prefix) && name.endsWith(".tmp"))
+      if (
+        name.startsWith(prefix) &&
+        name.endsWith(".tmp") &&
+        /^\d+$/.test(name.slice(prefix.length, -4))
+      )
         await rm(join(dirname(path), name), { force: true });
     }
   } catch (error: unknown) {
@@ -191,9 +195,9 @@ export async function resolveConfig(
     "OPENAI_API_KEY",
     "WORKSPACE_TOOLS_CACHE_DIR",
   ].some((name) => Boolean(env[name]?.trim()));
-  const shouldPersist = options.persist ?? !hasRuntimeOverrides;
   if (options.reset) await removeSavedConfigArtifacts(configPath);
-  const saved = shouldPersist ? await loadConfig(configPath) : undefined;
+  const saved = await loadConfig(configPath);
+  const shouldPersist = options.persist ?? !hasRuntimeOverrides;
   const required = async (
     envName: string,
     label: string,

@@ -50,12 +50,14 @@ async function readJsonBody(
 ): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
+  let reservedSize = 0;
   try {
     for await (const chunk of request) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (size + bytes.length > MAX_BODY_BYTES)
         throw new Error("MCP request body exceeds 4 MiB.");
       reserve(bytes.length);
+      reservedSize += bytes.length;
       size += bytes.length;
       chunks.push(bytes);
     }
@@ -63,7 +65,7 @@ async function readJsonBody(
     const body = chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, size);
     return JSON.parse(body.toString("utf8")) as unknown;
   } finally {
-    release(size);
+    release(reservedSize);
   }
 }
 
@@ -204,6 +206,8 @@ export async function startMcpServer(
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id) => {
+          if (closing || shutdown.signal.aborted)
+            throw new Error("MCP server is shutting down.");
           createdId = id;
           // Publish before initialize returns: subsequent client requests can route immediately.
           sessions.set(id, newSession!);
