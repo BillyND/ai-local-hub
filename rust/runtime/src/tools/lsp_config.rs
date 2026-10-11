@@ -115,6 +115,13 @@ pub fn load(cwd: &Path) -> Vec<ServerConfig> {
 /// Keep one TypeScript server: native `tsc --lsp` only when the install has no `lib/tsserver.js` (TS 7+).
 fn select_typescript(servers: &mut Vec<ServerConfig>) {
     let Some(native) = servers.iter().find(|s| s.name == "typescript-native") else { return };
+    let Some(language_server) = servers.iter().find(|s| s.name == "typescript-language-server") else { return };
+    let native_local = native.resolved.to_string_lossy().contains("node_modules/");
+    let language_server_local = language_server.resolved.to_string_lossy().contains("node_modules/");
+    if language_server_local && !native_local {
+        servers.retain(|s| s.name != "typescript-native");
+        return;
+    }
     let real = std::fs::canonicalize(&native.resolved).unwrap_or_else(|_| native.resolved.clone());
     let pkg = real.parent().filter(|p| p.file_name().is_some_and(|n| n == "bin")).and_then(Path::parent).map(Path::to_path_buf);
     let speaks_lsp = pkg.is_some_and(|p| p.join("package.json").exists() && !p.join("lib/tsserver.js").exists());
