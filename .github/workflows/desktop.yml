@@ -65,7 +65,7 @@ jobs:
             target: aarch64-apple-darwin
             artifact_glob: desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/**/*.dmg
           - name: macos-x64
-            platform: macos-13
+            platform: macos-latest
             target: x86_64-apple-darwin
             artifact_glob: desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/**/*.dmg
           - name: windows-x64
