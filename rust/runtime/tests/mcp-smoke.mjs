@@ -34,6 +34,13 @@ try {
   await client.connect(new StreamableHTTPClientTransport(new URL(url)));
   const tools = (await client.listTools()).tools.map(t=>t.name);
   for(const name of ["read","bash","edit","write","grep","glob","ls"])assert.ok(tools.includes(name),name);
+  const listed=(await client.listTools()).tools;
+  const hint=(n,k)=>listed.find(t=>t.name===n)?.annotations?.[k];
+  assert.equal(hint("read","readOnlyHint"),true);
+  assert.equal(hint("grep","readOnlyHint"),true);
+  assert.equal(hint("edit","readOnlyHint"),false);
+  assert.equal(hint("edit","destructiveHint"),true);
+  assert.equal(hint("bash","openWorldHint"),true);
   const call = (name,args) => client.callTool({name,arguments:args});
   const text = r=>r.content.find(c=>c.type==="text")?.text || "";
   assert.notEqual((await call("write",{path:"sample.txt",content:"one\nneedle\n"})).isError,true);

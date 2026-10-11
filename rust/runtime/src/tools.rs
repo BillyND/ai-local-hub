@@ -160,7 +160,7 @@ pub struct GrepArgs {/// Search pattern (regex)
 
 #[tool_router(server_handler)]
 impl CodingTools {
-    #[tool(description = "Read a file, directory or image. Line selectors go in the path (`src/a.rs:50-80`, `:-5`, `:raw`). Text rows are `N:text` under a `[path#TAG]` snapshot header that `edit` anchors on.")]
+    #[tool(description = "Read a file, directory or image. Line selectors go in the path (`src/a.rs:50-80`, `:-5`, `:raw`). Text rows are `N:text` under a `[path#TAG]` snapshot header that `edit` anchors on.", annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     fn read(&self,Parameters(args):Parameters<ReadArgs>)->CallToolResult {
         let detail=json!({"path":args.path});
         self.deliver(traced("read",detail,||self.read_impl(args)))
@@ -187,12 +187,12 @@ impl CodingTools {
         let text=match String::from_utf8(data){Ok(s)=>s,Err(_)=>return err(binary_note)};
         match read_text::render(&display,&path,&text,&sel,&self.store){Ok(out)=>ok(out),Err(e)=>err(e)}
     }
-    #[tool(description = "Write a whole file (creates parent directories). Prefer `edit` for existing files. Returns the new `[path#TAG]` snapshot header.")]
+    #[tool(description = "Write a whole file (creates parent directories). Prefer `edit` for existing files. Returns the new `[path#TAG]` snapshot header.", annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false))]
     fn write(&self,Parameters(args):Parameters<WriteArgs>)->CallToolResult {
         let detail=json!({"path":args.path,"bytes":args.content.as_ref().map(|c|c.len())});
         self.deliver(traced("write",detail,||match write_file::run(&self.root,&self.store,&args.path,args.content){Ok(t)=>ok(t),Err(e)=>err(e)}))
     }
-    #[tool(description = pi_edit::description(pi_edit::EditMode::Hashline))]
+    #[tool(description = pi_edit::description(pi_edit::EditMode::Hashline), annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = false))]
     async fn edit(&self,Parameters(args):Parameters<EditArgs>)->CallToolResult {
         let detail=json!({"bytes":args.input.len()});
         let result=traced_async("edit",detail,async {
@@ -200,7 +200,7 @@ impl CodingTools {
         }).await;
         self.deliver(result)
     }
-    #[tool(description = "List files and directories; directories have a trailing slash.")]
+    #[tool(description = "List files and directories; directories have a trailing slash.", annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     fn ls(&self,Parameters(args):Parameters<LsArgs>)->CallToolResult {
         let detail=json!({"path":args.path,"limit":args.limit});
         self.deliver(traced("ls",detail,||self.ls_impl(args)))
@@ -215,12 +215,12 @@ impl CodingTools {
         names.sort();
         ok(cut(names.into_iter().take(args.limit.unwrap_or(500).min(10_000)).collect::<Vec<_>>().join("\n")))
     }
-    #[tool(description = "Glob files/dirs: `;`-separated paths or patterns, default workspace root. `gitignore` and `hidden` default true; ignored dotfiles need `gitignore: false`. Newest-first; dirs end `/`.")]
+    #[tool(description = "Glob files/dirs: `;`-separated paths or patterns, default workspace root. `gitignore` and `hidden` default true; ignored dotfiles need `gitignore: false`. Newest-first; dirs end `/`.", annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     fn glob(&self,Parameters(args):Parameters<GlobArgs>)->CallToolResult {
         let detail=json!({"path":args.path,"limit":args.limit});
         self.deliver(traced("glob",detail,||match glob_tool::run(&self.root,glob_tool::Input{path:args.path,hidden:args.hidden,gitignore:args.gitignore,limit:args.limit}){Ok(t)=>ok(t),Err(e)=>err(e)}))
     }
-    #[tool(description = "Search file contents by regex (Rust, then look-around capable engine). `path`: `;`-separated file/dir/glob list, default `.`; a bare glob like `*.ts` matches at any depth, `dir/*.ts` only direct children. File-only selector: `src/foo.ts:50-100`. Default case-sensitive, gitignore respected; `skip` paginates files (20 per page). Results are `*N:text` rows under `[path#TAG]` / `## file#TAG` headers that `edit` can anchor on.")]
+    #[tool(description = "Search file contents by regex (Rust, then look-around capable engine). `path`: `;`-separated file/dir/glob list, default `.`; a bare glob like `*.ts` matches at any depth, `dir/*.ts` only direct children. File-only selector: `src/foo.ts:50-100`. Default case-sensitive, gitignore respected; `skip` paginates files (20 per page). Results are `*N:text` rows under `[path#TAG]` / `## file#TAG` headers that `edit` can anchor on.", annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     fn grep(&self,Parameters(args):Parameters<GrepArgs>)->CallToolResult {
         let detail=json!({"pattern":brief(&args.pattern),"path":args.path});
         self.deliver(traced("grep",detail,||{
@@ -228,7 +228,7 @@ impl CodingTools {
             match grep_tool::run(&self.root,&self.store,input){Ok(t)=>ok(t),Err(e)=>err(e)}
         }))
     }
-    #[tool(description = "Run a shell command (bash -c; each call is a fresh shell). Use `cwd`, not `cd`. `async` defers finite results but keeps the deadline (default 300s); `timeout: 0` for watchers and long jobs. Output is head+tail truncated; the full result is at `artifact://<id>` (read it with `read`). Non-pty calls still running after 60s (or 1s before `timeout`, if sooner) move to background job `bg_N` and keep running to `timeout`; the result is appended to your next tool result, or call `wait`. NEVER poll.")]
+    #[tool(description = "Run a shell command (bash -c; each call is a fresh shell). Use `cwd`, not `cd`. `async` defers finite results but keeps the deadline (default 300s); `timeout: 0` for watchers and long jobs. Output is head+tail truncated; the full result is at `artifact://<id>` (read it with `read`). Non-pty calls still running after 60s (or 1s before `timeout`, if sooner) move to background job `bg_N` and keep running to `timeout`; the result is appended to your next tool result, or call `wait`. NEVER poll.", annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = true))]
     async fn bash(&self,Parameters(args):Parameters<BashArgs>)->CallToolResult {
         let detail=json!({"command":brief(&args.command),"timeout":args.timeout,"cwd":args.cwd});
         let permit=match self.process_limit.clone().try_acquire_owned(){
@@ -240,26 +240,26 @@ impl CodingTools {
         let result=traced_async("bash",detail,async move{let (text,failed)=bash_tool::run(ctx,input).await;if failed{err(text)}else{ok(text)}}).await;
         self.deliver(result)
     }
-    #[tool(description = "Structural code search via ast-grep: use when syntax shape matters more than text (calls, declarations). Narrow each call to one language; `pat` is ONE AST pattern (`$NAME` = one node, `$_` unbound, `$$$NAME` zero-or-more; a repeated metavariable must match identical code). Patterns must parse as a single AST node (wrap fragments, e.g. `class $_ { ... }`). Parse issues mean query failure, not absence. Results are `*N:text` rows (+ `meta:` captures) under `[path#TAG]` headers; 50 matches per page, use `skip`.")]
+    #[tool(description = "Structural code search via ast-grep: use when syntax shape matters more than text (calls, declarations). Narrow each call to one language; `pat` is ONE AST pattern (`$NAME` = one node, `$_` unbound, `$$$NAME` zero-or-more; a repeated metavariable must match identical code). Patterns must parse as a single AST node (wrap fragments, e.g. `class $_ { ... }`). Parse issues mean query failure, not absence. Results are `*N:text` rows (+ `meta:` captures) under `[path#TAG]` headers; 50 matches per page, use `skip`.", annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     fn ast_grep(&self,Parameters(args):Parameters<AstGrepArgs>)->CallToolResult {
         let detail=json!({"pat":brief(&args.pat),"path":args.path,"lang":args.lang});
         self.deliver(traced("ast_grep",detail,||match ast_grep_tool::run(&self.root,&self.store,ast_grep_tool::Input{pat:args.pat,path:args.path,lang:args.lang,skip:args.skip}){Ok(t)=>ok(t),Err(e)=>err(e)}))
     }
-    #[tool(description = "Structural AST-aware rewrites via ast-grep, for codemods where text replace is unsafe. Mixed-language paths are fine: each file is parsed in its own language. Metavariables in `pat` (`$A`, `$$$ARGS`) substitute into `out`; delete with empty `out`. Patterns match AST structure, not text; a repeated metavariable must match identical code; rewrite patterns must parse as a single AST node. Matches are STAGED as a proposal, not applied: finalize with `resolve` (apply) or `reject` (discard). Parse issues mean a malformed rewrite, not a clean no-op. For one-off text edits prefer `edit`.")]
+    #[tool(description = "Structural AST-aware rewrites via ast-grep, for codemods where text replace is unsafe. Mixed-language paths are fine: each file is parsed in its own language. Metavariables in `pat` (`$A`, `$$$ARGS`) substitute into `out`; delete with empty `out`. Patterns match AST structure, not text; a repeated metavariable must match identical code; rewrite patterns must parse as a single AST node. Matches are STAGED as a proposal, not applied: finalize with `resolve` (apply) or `reject` (discard). Parse issues mean a malformed rewrite, not a clean no-op. For one-off text edits prefer `edit`.", annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = false))]
     fn ast_edit(&self,Parameters(args):Parameters<AstEditArgs>)->CallToolResult {
         let detail=json!({"ops":args.ops.len(),"paths":args.paths});
         let input=ast_edit_tool::Input{ops:args.ops.into_iter().map(|o|ast_edit_tool::Op{pat:o.pat,out:o.out}).collect(),paths:args.paths};
         self.deliver(traced("ast_edit",detail,||match ast_edit_tool::run(&self.root,&self.store,&self.pending,input){Ok(t)=>ok(t),Err(e)=>err(e)}))
     }
-    #[tool(description = "Apply the oldest staged `ast_edit` preview (write a one-sentence reason). Only valid while a preview is pending.")]
+    #[tool(description = "Apply the oldest staged `ast_edit` preview (write a one-sentence reason). Only valid while a preview is pending.", annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = false))]
     fn resolve(&self,Parameters(_args):Parameters<ReasonArgs>)->CallToolResult {
         self.deliver(traced("resolve",json!({}),||match ast_edit_tool::resolve(&self.root,&self.store,&self.pending){Ok((t,stale))=>if stale{err(t)}else{ok(t)},Err(e)=>err(e)}))
     }
-    #[tool(description = "Discard the oldest staged `ast_edit` preview without changing any file (write a one-sentence reason).")]
+    #[tool(description = "Discard the oldest staged `ast_edit` preview without changing any file (write a one-sentence reason).", annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     fn reject(&self,Parameters(args):Parameters<ReasonArgs>)->CallToolResult {
         self.deliver(traced("reject",json!({}),||ok(ast_edit_tool::reject(&self.pending,args.reason.as_deref().unwrap_or("")))))
     }
-    #[tool(description = "Symbol-aware code intelligence from language servers: navigation, refactors and diagnostics where text tools miss callsites. Position-based actions take `file` + `line` + `symbol` (substring; `#N` for the Nth match; `line` is 1-indexed). `rename` applies by default (`apply: false` previews); project-aware lookups ERROR without `symbol`. `code_actions` lists by default; apply ONE with `apply: true` + `query` (title substring or index). `rename_file` moves a file AND rewrites all imports/references. `diagnostics` takes a path, a glob, or `file: \"*\"` for the workspace. `symbols`: `file` lists file symbols, `file: \"*\"` + `query` searches the workspace. `reload` restarts/reloads one server (`file`) or all (`*`). `request`: raw LSP, `query` = method, `payload` = JSON params. Symbol-aware work MUST use `lsp` whenever a server is available; NEVER do a cross-file rename with `ast_edit`/`sed`/hand edits when `rename`/`rename_file` can.")]
+    #[tool(description = "Symbol-aware code intelligence from language servers: navigation, refactors and diagnostics where text tools miss callsites. Position-based actions take `file` + `line` + `symbol` (substring; `#N` for the Nth match; `line` is 1-indexed). `rename` applies by default (`apply: false` previews); project-aware lookups ERROR without `symbol`. `code_actions` lists by default; apply ONE with `apply: true` + `query` (title substring or index). `rename_file` moves a file AND rewrites all imports/references. `diagnostics` takes a path, a glob, or `file: \"*\"` for the workspace. `symbols`: `file` lists file symbols, `file: \"*\"` + `query` searches the workspace. `reload` restarts/reloads one server (`file`) or all (`*`). `request`: raw LSP, `query` = method, `payload` = JSON params. Symbol-aware work MUST use `lsp` whenever a server is available; NEVER do a cross-file rename with `ast_edit`/`sed`/hand edits when `rename`/`rename_file` can.", annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = false))]
     async fn lsp(&self,Parameters(args):Parameters<LspArgs>)->CallToolResult {
         let detail=json!({"action":args.action,"file":args.file});
         let ctx=lsp_tool::Ctx{root:self.root.clone(),pool:Arc::clone(&self.lsp),server:Default::default()};
@@ -267,11 +267,11 @@ impl CodingTools {
         let result=traced_async("lsp",detail,async move{match lsp_tool::run(&ctx,input).await{Ok(t)=>ok(t),Err(e)=>err(e)}}).await;
         self.deliver(result)
     }
-    #[tool(description = "Wait only when blocked with nothing else to do. Blocks on background jobs you started; returns on the first result (or a still-running snapshot after a safety cap). Nothing running: errors. Results also arrive with your next tool result. NEVER poll while work remains.")]
+    #[tool(description = "Wait only when blocked with nothing else to do. Blocks on background jobs you started; returns on the first result (or a still-running snapshot after a safety cap). Nothing running: errors. Results also arrive with your next tool result. NEVER poll while work remains.", annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     async fn wait(&self)->CallToolResult {
         match self.jobs.wait(Duration::from_secs(WAIT_CAP_SECS)).await{Ok(t)=>ok(t),Err(e)=>err(e)}
     }
-    #[tool(description = "Cancel a running background job by id (`bg_1`).")]
+    #[tool(description = "Cancel a running background job by id (`bg_1`).", annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = false))]
     fn kill_job(&self,Parameters(args):Parameters<JobArgs>)->CallToolResult {
         ok(self.jobs.cancel(&args.id))
     }
@@ -284,6 +284,14 @@ mod tests {
         let cut=cut(s);
         assert!(cut.ends_with("[Output truncated at 50 KB; use offset/limit or narrower search.]"));
         assert!(cut.starts_with(&"a".repeat(49_999)));
+    }
+    #[test] fn tools_declare_accurate_annotations(){
+        let tools=CodingTools::tool_router().list_all();
+        let ann=|n:&str|tools.iter().find(|t|t.name==n).and_then(|t|t.annotations.clone()).unwrap_or_else(||panic!("{n} has no annotations"));
+        for n in ["read","grep","glob","ls","ast_grep","wait"]{let a=ann(n);assert_eq!((a.read_only_hint,a.destructive_hint),(Some(true),Some(false)),"{n}");}
+        for n in ["write","edit","ast_edit","resolve","bash","kill_job","lsp"]{let a=ann(n);assert_eq!((a.read_only_hint,a.destructive_hint),(Some(false),Some(true)),"{n}");}
+        assert_eq!(ann("bash").open_world_hint,Some(true));
+        assert_eq!(ann("read").open_world_hint,Some(false));
     }
     #[test] fn startup_log_lists_every_served_tool(){
         let names=CodingTools::tool_names();
