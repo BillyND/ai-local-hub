@@ -122,7 +122,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ai-local-hub-${{ matrix.name }}
+          name: ai-local-hub-installer-${{ matrix.name }}
           path: ${{ matrix.artifact_glob }}
           if-no-files-found: error
 
@@ -131,10 +131,11 @@ jobs:
     needs: bundle
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
-          pattern: ai-local-hub-*
+          pattern: ai-local-hub-installer-*
           merge-multiple: true
       - name: Create GitHub release and upload installers
         env:
@@ -146,5 +147,5 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --title "AI Local Hub ${GITHUB_REF_NAME}" \
-            --generate-notes \
+            --notes-file "docs/releases/${GITHUB_REF_NAME#v}.md" \
             --latest
