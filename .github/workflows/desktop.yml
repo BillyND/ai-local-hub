@@ -94,6 +94,8 @@ jobs:
             file \
             libssl-dev \
             libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
             libsoup-3.0-dev \
             librsvg2-dev \
             patchelf
