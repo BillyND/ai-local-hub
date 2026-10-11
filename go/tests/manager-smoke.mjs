@@ -71,6 +71,14 @@ try {
   const login = await fetch(link, { redirect: "manual" });
   const cookie = login.headers.get("set-cookie").split(";")[0];
   assert.ok(cookie.startsWith("wtm_session="));
+  const page=await fetch(origin+'/',{headers:{cookie}});
+  assert.equal(page.status,200);
+  const html=await page.text();assert.match(html,/<div id="root"><\/div>/);
+  const appBundle=html.match(/src="([^"]+\.js)"/)?.[1];
+  assert.ok(appBundle,'missing React entrypoint');
+  assert.equal((await fetch(new URL(appBundle,origin),{headers:{cookie}})).status,200);
+  const traversal=await fetch(origin+'/%2e%2e/package.json',{headers:{cookie}});
+  assert.notEqual(traversal.status,200,'static traversal exposed project files');
   const api = async (method, path, body) => {
     const res = await fetch(origin + "/api" + path, {
       method,

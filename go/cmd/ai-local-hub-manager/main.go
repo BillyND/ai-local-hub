@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -113,5 +112,3 @@ func run() error {
 	defer cancel()
 	return srv.Shutdown(c)
 }
-
-var _ = strings.TrimSpace

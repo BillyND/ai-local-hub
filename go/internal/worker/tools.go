@@ -110,7 +110,7 @@ func defaultInt(n, d, cap int) int {
 }
 func Register(server *mcp.Server, root string) {
 	add(server, "read", "Read text with 1-indexed offset/limit, or supported images", func(_ context.Context, a ReadArgs) (*mcp.CallToolResult, error) {
-		if a.Offset < 0 || a.Offset == 0 && a.Limit < 0 {
+		if a.Offset < 0 || a.Limit < 0 {
 			return nil, errors.New("invalid offset/limit")
 		}
 		p := pathAt(root, a.Path)
