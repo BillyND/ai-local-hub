@@ -9,3 +9,5 @@ Local changes:
   grammars work; on-demand wasm grammars report "not installed". tree-sitter-go is the crates.io 0.25
   release, not omp's patched copy (no Go 1.26 `new(expr)` support). The wasm grammar test was removed.
 - pi-edit: `xutf` (nightly-only) replaced by `unicode-normalization` for NFC in text.rs.
+
+- lsp-defaults.json: copied verbatim from packages/coding-agent/src/lsp/defaults.json (default language server table).

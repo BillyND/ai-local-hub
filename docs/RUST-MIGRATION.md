@@ -114,4 +114,8 @@ Phase 4 (ast_grep / ast_edit) done on the vendored `pi-ast`: `tools/ast_common.r
 
 AST deviations from omp: omp's `xd://resolve` / `xd://reject` devices became the MCP tools `resolve` / `reject` (FIFO per session; same texts, including the stale-preview message); only the 18 linked grammars work (no on-demand wasm grammars, so other languages are skipped with a note); like omp, a stale preview is detected after the files were written.
 
-Not started: lsp, debug, eval (see plan).
+Phase 5 (lsp) done: `tools/lsp_client.rs` (JSON-RPC client, document sync, push + pull diagnostics, progress), `lsp_pool.rs`, `lsp_config.rs` (omp's `lsp-defaults.json`, `lsp.json` overrides, root markers, TypeScript server selection), `lsp_edits.rs` (UTF-16 text edits, workspace edits, rollback), `lsp_format.rs`, `lsp_position.rs`, `lsp_actions.rs`, `lsp_tool.rs`, `lsp_workspace.rs`. Tests: `omp-lsp-tools-smoke.mjs` (scriptable fake server, every action) and `omp-lsp-real-server-smoke.mjs` (clangd, skipped when absent). Also verified by hand against TypeScript 7 native (`tsc --lsp`): diagnostics (pull model), definition, references, hover, symbols, project-wide rename, `rename_file` rewriting imports.
+
+LSP deviations from omp: no lspmux / shared-server broker, no idle shutdown of servers, no biome / swiftlint CLI linter clients, no write-through diagnostics (that belongs to omp's edit/write tools), a client is created lazily per MCP session and stopped when the session ends; like omp, the first call to a server that sends no progress notifications waits up to 15s for project load; status icons are fixed to the unicode preset (`✔ ✘ ⚠`, `❯`).
+
+Not started: debug, eval (see plan).

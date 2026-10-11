@@ -19,6 +19,15 @@ mod grep_scope;
 mod glob_tool;
 mod grep_tool;
 mod hashline_edit;
+mod lsp_actions;
+mod lsp_client;
+mod lsp_config;
+mod lsp_edits;
+mod lsp_format;
+mod lsp_pool;
+mod lsp_position;
+mod lsp_tool;
+mod lsp_workspace;
 mod read_dir;
 mod read_selector;
 mod read_text;
@@ -52,11 +61,11 @@ fn shell_path() -> Option<std::ffi::OsString> {
 }
 
 #[derive(Clone)]
-pub struct CodingTools {root:PathBuf, process_limit: Arc<Semaphore>, store: EditStore, artifacts: Arc<artifacts::Artifacts>, jobs: Arc<bash_jobs::Jobs>, pending: Arc<ast_edit_tool::PendingList>}
+pub struct CodingTools {root:PathBuf, process_limit: Arc<Semaphore>, store: EditStore, artifacts: Arc<artifacts::Artifacts>, jobs: Arc<bash_jobs::Jobs>, pending: Arc<ast_edit_tool::PendingList>, lsp: Arc<lsp_pool::Pool>}
 impl CodingTools {
     pub fn new(root:PathBuf)->Self {
         static PROCESS_LIMIT: OnceLock<Arc<Semaphore>> = OnceLock::new();
-        Self { root, process_limit: Arc::clone(PROCESS_LIMIT.get_or_init(|| Arc::new(Semaphore::new(16)))), store: EditStore::new(), artifacts: Arc::new(artifacts::Artifacts::new()), jobs: Arc::new(bash_jobs::Jobs::default()), pending: Arc::new(Default::default()) }
+        Self { root, process_limit: Arc::clone(PROCESS_LIMIT.get_or_init(|| Arc::new(Semaphore::new(16)))), store: EditStore::new(), artifacts: Arc::new(artifacts::Artifacts::new()), jobs: Arc::new(bash_jobs::Jobs::default()), pending: Arc::new(Default::default()), lsp: Arc::new(Default::default()) }
     }
     fn path(&self,p:&str)->PathBuf {let p=Path::new(p); if p.is_absolute(){p.to_path_buf()} else {self.root.join(p)}}
     /// Appends settled background-job results to this tool's result (MCP has no server-initiated turns).
@@ -113,6 +122,17 @@ pub struct AstEditArgs {/// Rewrite operations (applied per language of each fil
 #[derive(Debug,Deserialize,JsonSchema)]
 pub struct ReasonArgs {/// One-sentence reason
     reason:Option<String>}
+#[derive(Debug,Deserialize,JsonSchema)]
+pub struct LspArgs {/// diagnostics | definition | type_definition | implementation | references | hover | symbols | rename | rename_file | code_actions | status | reload | capabilities | request
+    action:String, /// File path (`*` for workspace scope where supported; a glob for diagnostics)
+    file:Option<String>, /// 1-indexed line
+    line:Option<f64>, /// Symbol on the line (substring; `name#N` for the Nth occurrence)
+    symbol:Option<String>, /// Search query, code-action title or index, or raw LSP method for `request`
+    query:Option<String>, /// New name for `rename`, or destination path for `rename_file`
+    new_name:Option<String>, /// Apply the change (default true for rename / rename_file; false previews)
+    apply:Option<bool>, /// Timeout in seconds (default 20, 5-300)
+    timeout:Option<f64>, /// JSON params for `request`
+    payload:Option<String>}
 #[derive(Debug,Deserialize,JsonSchema)]
 pub struct JobArgs {/// Job id such as `bg_1`
     id:String}
@@ -232,6 +252,14 @@ impl CodingTools {
     #[tool(description = "Discard the oldest staged `ast_edit` preview without changing any file (write a one-sentence reason).")]
     fn reject(&self,Parameters(args):Parameters<ReasonArgs>)->CallToolResult {
         self.deliver(traced("reject",json!({}),||ok(ast_edit_tool::reject(&self.pending,args.reason.as_deref().unwrap_or("")))))
+    }
+    #[tool(description = "Symbol-aware code intelligence from language servers: navigation, refactors and diagnostics where text tools miss callsites. Position-based actions take `file` + `line` + `symbol` (substring; `#N` for the Nth match; `line` is 1-indexed). `rename` applies by default (`apply: false` previews); project-aware lookups ERROR without `symbol`. `code_actions` lists by default; apply ONE with `apply: true` + `query` (title substring or index). `rename_file` moves a file AND rewrites all imports/references. `diagnostics` takes a path, a glob, or `file: \"*\"` for the workspace. `symbols`: `file` lists file symbols, `file: \"*\"` + `query` searches the workspace. `reload` restarts/reloads one server (`file`) or all (`*`). `request`: raw LSP, `query` = method, `payload` = JSON params. Symbol-aware work MUST use `lsp` whenever a server is available; NEVER do a cross-file rename with `ast_edit`/`sed`/hand edits when `rename`/`rename_file` can.")]
+    async fn lsp(&self,Parameters(args):Parameters<LspArgs>)->CallToolResult {
+        let detail=json!({"action":args.action,"file":args.file});
+        let ctx=lsp_tool::Ctx{root:self.root.clone(),pool:Arc::clone(&self.lsp),server:Default::default()};
+        let input=lsp_tool::Input{action:args.action,file:args.file,line:args.line,symbol:args.symbol,query:args.query,new_name:args.new_name,apply:args.apply,timeout:args.timeout,payload:args.payload};
+        let result=traced_async("lsp",detail,async move{match lsp_tool::run(&ctx,input).await{Ok(t)=>ok(t),Err(e)=>err(e)}}).await;
+        self.deliver(result)
     }
     #[tool(description = "Wait only when blocked with nothing else to do. Blocks on background jobs you started; returns on the first result (or a still-running snapshot after a safety cap). Nothing running: errors. Results also arrive with your next tool result. NEVER poll while work remains.")]
     async fn wait(&self)->CallToolResult {
