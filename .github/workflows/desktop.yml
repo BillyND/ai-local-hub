@@ -154,5 +154,5 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --title "AI Local Hub ${GITHUB_REF_NAME}" \
-            --notes-file "docs/releases/${GITHUB_REF_NAME#v}.md" \
+            --notes-file "docs/releases/${GITHUB_REF_NAME}.md" \
             --latest
