@@ -141,9 +141,15 @@ pub async fn run(ctx: Ctx, input: Input) -> (String, bool) {
         res = &mut task => { guard.0 = None; match res { Ok(r) => { let b = finish(r, &capture, &notices); (b.text, b.failed) }, Err(e) => (format!("Command failed: {e}"), true) } },
         () = async { match wait_secs { Some(w) => tokio::time::sleep(Duration::from_secs_f64(w)).await, None => std::future::pending().await } }, if !jobs.at_capacity() => {
             guard.0 = None;
-            let preview = bash_output::shape(&capture.lock().unwrap_or_else(|e| e.into_inner()).bytes).body;
+            // With a zero wait window (a timeout clamped to 1s), the child may
+            // already have emitted partial output while the timeout branch wins.
+            // Omit that racy preview; the settled result delivered by `wait`
+            // remains authoritative and keeps the initial response stable.
+            let preview = if wait_secs == Some(0.0) { String::new() } else {
+                bash_output::shape(&capture.lock().unwrap_or_else(|e| e.into_inner()).bytes).body
+            };
             spawn_job(task, tx, preview, notices)
-        },
+        }
     }
 }
 
