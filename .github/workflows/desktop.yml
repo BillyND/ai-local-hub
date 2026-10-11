@@ -1,18 +1,22 @@
 name: desktop
 
-# Native Rust MCP manager + worker; native installers for macOS, Windows and Linux.
-# Manual runs upload workflow artifacts. A v* tag creates a published GitHub release
-# after every platform bundle has passed its platform-specific integrity check.
+# Full tests run on branch pushes. A v* tag skips duplicate verification, builds the
+# web UI once, then packages native installers in parallel on native OS runners.
 on:
-  workflow_dispatch:
   push:
+    branches: [main]
     tags: ['v*']
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   verify:
+    # Pull requests and main pushes get the full regression suite. Tag packaging
+    # deliberately skips this duplicate work; tag only a commit already validated.
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -24,13 +28,34 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: './rust/runtime -> target'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm --prefix web ci
       - run: npm run build
       - run: npm test
 
+  web-assets:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build web assets once
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix web ci
+          npm --prefix web run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-local-hub-web-assets
+          path: dist/web
+          if-no-files-found: error
+
   bundle:
-    needs: verify
+    needs: web-assets
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -72,29 +97,26 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: './desktop/src-tauri -> target'
+          workspaces: |
+            ./rust/runtime -> target
+            ./desktop/src-tauri -> target
 
-      - name: Build the manager, worker and web UI
-        run: |
-          npm ci
-          npm --prefix web ci
-          npm --prefix desktop ci
-          npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-local-hub-web-assets
+          path: dist/web
 
+      - name: Install desktop dependencies
+        run: npm --prefix desktop ci --ignore-scripts
       - name: Stage native Rust manager, worker and React assets
-        run: |
-          node scripts/stage-rust-desktop.mjs --target ${{ matrix.target }}
-
+        run: node scripts/stage-rust-desktop.mjs --target ${{ matrix.target }}
       - name: Build native installers
         run: node scripts/tauri-build.mjs build --target ${{ matrix.target }}
-
       - name: Check native bundle integrity
         run: node scripts/verify-desktop-build.mjs --target ${{ matrix.target }}
 
@@ -114,7 +136,6 @@ jobs:
           path: release-assets
           pattern: ai-local-hub-*
           merge-multiple: true
-
       - name: Create GitHub release and upload installers
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
