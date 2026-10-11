@@ -5,6 +5,7 @@ use ignore::WalkBuilder;
 use regex::RegexBuilder;
 use rmcp::{handler::server::wrapper::Parameters, model::{CallToolResult, ContentBlock}, schemars::JsonSchema, tool, tool_router};
 use serde::Deserialize;
+use crate::tool_log::{brief,traced,traced_async};
 use serde_json::json;
 use std::{fs, process::Stdio, path::{Path,PathBuf}, time::{Duration,Instant}, sync::{Arc,Mutex,OnceLock}};
 use tokio::{io::{AsyncRead, AsyncReadExt}, process::Command, sync::Semaphore, time::timeout};
@@ -114,6 +115,10 @@ pub struct GrepArgs {pattern:String,path:Option<String>,glob:Option<String>,igno
 impl CodingTools {
     #[tool(description = "Read a text file with optional line offset/limit; supports image files.")]
     fn read(&self,Parameters(args):Parameters<ReadArgs>)->CallToolResult {
+        let detail=json!({"path":args.path,"offset":args.offset,"limit":args.limit});
+        traced("read",detail,||self.read_impl(args))
+    }
+    fn read_impl(&self,args:ReadArgs)->CallToolResult {
         if args.offset==Some(0) {return err("offset must be 1-indexed");}
         let path=self.path(&args.path);
         if fs::metadata(&path).is_ok_and(|m| m.len()>MAX_FILE_BYTES) {
@@ -138,6 +143,10 @@ impl CodingTools {
     }
     #[tool(description = "Write a UTF-8 file; creates parent directories when needed.")]
     fn write(&self,Parameters(args):Parameters<WriteArgs>)->CallToolResult {
+        let detail=json!({"path":args.path,"bytes":args.content.len()});
+        traced("write",detail,||self.write_impl(args))
+    }
+    fn write_impl(&self,args:WriteArgs)->CallToolResult {
         let path=self.path(&args.path);
         if args.content.len() as u64>MAX_FILE_BYTES {return err("Write exceeds the 32 MiB limit");}
         let result=(||->std::io::Result<()> {
@@ -149,6 +158,10 @@ impl CodingTools {
     }
     #[tool(description = "Edit a text file with unique exact-text replacements; all edits validate against the original file.")]
     fn edit(&self,Parameters(args):Parameters<EditArgs>)->CallToolResult {
+        let detail=json!({"path":args.path,"edits":args.edits.len().max(usize::from(args.old_text.is_some()))});
+        traced("edit",detail,||self.edit_impl(args))
+    }
+    fn edit_impl(&self,args:EditArgs)->CallToolResult {
         let path=self.path(&args.path);
         // Follow a file symlink instead of accidentally replacing the symlink itself.
         let path=match path.canonicalize(){
@@ -194,6 +207,10 @@ impl CodingTools {
     }
     #[tool(description = "List files and directories; directories have a trailing slash.")]
     fn ls(&self,Parameters(args):Parameters<LsArgs>)->CallToolResult {
+        let detail=json!({"path":args.path,"limit":args.limit});
+        traced("ls",detail,||self.ls_impl(args))
+    }
+    fn ls_impl(&self,args:LsArgs)->CallToolResult {
         let path=self.path(args.path.as_deref().unwrap_or("."));
         let dir=match fs::read_dir(&path){Ok(v)=>v,Err(e)=>return err(format!("Cannot list {}: {e}",path.display()))};
         let mut names=dir.filter_map(|e|e.ok()).map(|e|{
@@ -205,6 +222,10 @@ impl CodingTools {
     }
     #[tool(description = "Find files by glob, honoring .gitignore; returns paths relative to the search directory.")]
     fn find(&self,Parameters(args):Parameters<FindArgs>)->CallToolResult {
+        let detail=json!({"pattern":args.pattern,"path":args.path,"limit":args.limit});
+        traced("find",detail,||self.find_impl(args))
+    }
+    fn find_impl(&self,args:FindArgs)->CallToolResult {
         let root=self.path(args.path.as_deref().unwrap_or("."));
         if !root.is_dir(){return err(format!("Not a directory: {}",root.display()));}
         let pattern=match globset::Glob::new(&args.pattern){Ok(p)=>p.compile_matcher(),Err(e)=>return err(format!("Invalid glob: {e}"))};
@@ -223,6 +244,10 @@ impl CodingTools {
     }
     #[tool(description = "Search file contents by regex or literal text; respects .gitignore.")]
     fn grep(&self,Parameters(args):Parameters<GrepArgs>)->CallToolResult {
+        let detail=json!({"pattern":brief(&args.pattern),"path":args.path,"glob":args.glob});
+        traced("grep",detail,||self.grep_impl(args))
+    }
+    fn grep_impl(&self,args:GrepArgs)->CallToolResult {
         let root=self.path(args.path.as_deref().unwrap_or("."));
         let query=if args.literal.unwrap_or(false){regex::escape(&args.pattern)}else{args.pattern.clone()};
         let regex=match RegexBuilder::new(&query).case_insensitive(args.ignore_case.unwrap_or(false)).build(){
@@ -274,6 +299,10 @@ impl CodingTools {
     }
     #[tool(description = "Execute a shell command in the workspace; returns output, exit code, wall time and truncation status.")]
     async fn bash(&self,Parameters(args):Parameters<ShellArgs>)->CallToolResult {
+        let detail=json!({"command":brief(&args.command),"timeout":args.timeout});
+        traced_async("bash",detail,self.bash_impl(args)).await
+    }
+    async fn bash_impl(&self,args:ShellArgs)->CallToolResult {
         if args.command.trim().is_empty(){return err("command is required");}
         if let Some(seconds)=args.timeout {if !seconds.is_finite()||seconds<=0.0{return err("timeout must be positive");}}
         let _permit=match self.process_limit.clone().try_acquire_owned(){

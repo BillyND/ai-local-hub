@@ -4,3 +4,4 @@ pub mod manager_config;
 pub mod manager_core;
 pub mod manager_http;
 pub mod tunnel_download;
+pub mod tool_log;
