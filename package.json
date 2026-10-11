@@ -2,7 +2,7 @@
   "name": "ai-local-hub",
   "version": "0.2.0",
   "private": true,
-  "description": "Local MCP tools for AI clients, with room for skills and extensions",
+  "description": "Native Rust MCP hub for AI clients, with a React UI and Tauri desktop shell",
   "type": "module",
   "engines": {
     "node": ">=22.19.0"
@@ -17,29 +17,14 @@
     "dev:web": "npm --prefix web run dev",
     "test": "npm run test:rust",
     "test:rust": "node scripts/native-build.mjs --debug && node rust/runtime/tests/mcp-smoke.mjs && node rust/runtime/tests/hardening-smoke.mjs && node rust/runtime/tests/manager-smoke.mjs && node scripts/test-cargo.mjs",
-    "test:legacy": "tsx --test tests/*.test.ts",
-    "test:go": "node scripts/test-go.mjs",
-    "dev:go": "node scripts/start-go-dev.mjs",
-    "benchmark:go": "node scripts/benchmark-go.mjs",
     "smoke": "npm run test:rust",
-    "benchmark:legacy": "node scripts/benchmark.mjs",
     "desktop:setup": "npm --prefix desktop install --no-audit --no-fund",
     "desktop:dev": "npm run build && npm --prefix desktop run dev",
     "desktop:build": "npm run build && npm --prefix desktop run build",
     "build:rust:dev": "node scripts/native-build.mjs --debug",
     "build:dev": "npm run build:rust:dev && npm --prefix web run build"
   },
-  "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.1.0",
-    "@modelcontextprotocol/sdk": "1.32.1",
-    "fflate": "0.8.2",
-    "typebox": "1.3.27",
-    "zod": "4.6.5"
-  },
   "devDependencies": {
-    "@types/node": "22.19.19",
-    "esbuild": "0.28.2",
-    "tsx": "4.23.15",
-    "typescript": "5.9.3"
+    "@modelcontextprotocol/sdk": "1.32.1"
   }
 }

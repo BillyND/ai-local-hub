@@ -2,19 +2,7 @@
 
 **Native Rust MCP hub for ChatGPT and other AI clients.** The AI client remains the agent; AI Local Hub gives it coding tools on your own computer. No local AI model is required.
 
-The **manager, MCP protocol server, coding-tool execution, instance supervision, config/API and OpenAI tunnel orchestration are written in Rust**. The desktop container is Tauri 2 / Rust. The visual UI is React/Vite and is served as static files; it does not run a Node/Bun application server. The TypeScript implementation remains in `src/` for compatibility comparisons and regression testing, but **the native Rust path is the default**.
-
-## Go migration (development only)
-
-A separate Go manager + official MCP Go SDK worker is being migrated under [`go/`](go/) using the existing React UI contract. **This is not a production replacement and there is no Wails desktop build.** Current Rust/Tauri defaults remain unchanged.
-
-```bash
-npm run test:go       # Go vet/race, Vite/TypeScript, MCP + manager + fake tunnel tests
-npm run dev:go        # isolated config, local-only Go manager
-npm run benchmark:go  # measured Rust-vs-Go MCP benchmark, when Rust release exists
-```
-
-For the verified feature matrix, limitations, benchmark, platform gaps, and rollback instructions, see [Go migration checkpoint](docs/go-migration/README.md). **Do not use an existing production config or tunnel key with the experimental Go manager.**
+The **manager, MCP protocol server, coding-tool execution, instance supervision, config/API and OpenAI tunnel orchestration are written in Rust**. The desktop container is Tauri 2 / Rust. The visual UI is React/Vite and is served as static files; it does not run a Node/Bun application server.
 
 ## Build and run (from the repository)
 
@@ -101,7 +89,6 @@ Tunnel archive checksum verification protects against accidental/corrupted downl
 ```bash
 npm run build             # Rust release executables + React UI
 npm test                  # Rust MCP smoke, Rust manager/API integration, cargo tests
-npm run test:legacy       # old TypeScript regression suite (reference runtime)
 node scripts/verify-desktop-build.mjs  # verify native app sidecars and macOS DMG
 ```
 
@@ -122,7 +109,6 @@ rust/runtime/
 desktop/src-tauri/                 # Tauri 2 native desktop shell
 web/                               # React UI and static assets
 scripts/                           # native build, staging and launch scripts
-src/, tests/                       # legacy TypeScript reference implementation/tests
 ```
 
 ## Design principles
