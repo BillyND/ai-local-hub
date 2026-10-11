@@ -6,6 +6,9 @@ use serde::Deserialize;
 use crate::tool_log::{brief,traced,traced_async};
 use pi_edit::EditStore;
 mod artifacts;
+mod ast_common;
+mod ast_edit_tool;
+mod ast_grep_tool;
 mod bash_jobs;
 mod bash_output;
 mod bash_run;
@@ -49,11 +52,11 @@ fn shell_path() -> Option<std::ffi::OsString> {
 }
 
 #[derive(Clone)]
-pub struct CodingTools {root:PathBuf, process_limit: Arc<Semaphore>, store: EditStore, artifacts: Arc<artifacts::Artifacts>, jobs: Arc<bash_jobs::Jobs>}
+pub struct CodingTools {root:PathBuf, process_limit: Arc<Semaphore>, store: EditStore, artifacts: Arc<artifacts::Artifacts>, jobs: Arc<bash_jobs::Jobs>, pending: Arc<ast_edit_tool::PendingList>}
 impl CodingTools {
     pub fn new(root:PathBuf)->Self {
         static PROCESS_LIMIT: OnceLock<Arc<Semaphore>> = OnceLock::new();
-        Self { root, process_limit: Arc::clone(PROCESS_LIMIT.get_or_init(|| Arc::new(Semaphore::new(16)))), store: EditStore::new(), artifacts: Arc::new(artifacts::Artifacts::new()), jobs: Arc::new(bash_jobs::Jobs::default()) }
+        Self { root, process_limit: Arc::clone(PROCESS_LIMIT.get_or_init(|| Arc::new(Semaphore::new(16)))), store: EditStore::new(), artifacts: Arc::new(artifacts::Artifacts::new()), jobs: Arc::new(bash_jobs::Jobs::default()), pending: Arc::new(Default::default()) }
     }
     fn path(&self,p:&str)->PathBuf {let p=Path::new(p); if p.is_absolute(){p.to_path_buf()} else {self.root.join(p)}}
     /// Appends settled background-job results to this tool's result (MCP has no server-initiated turns).
@@ -93,6 +96,23 @@ pub struct BashArgs {/// Command to run
     cwd:Option<String>, /// Run in a terminal; unavailable here, ignored with a notice
     pty:Option<bool>, /// Run as a background job and return its id immediately
     #[serde(rename="async")] background:Option<bool>}
+#[derive(Debug,Deserialize,JsonSchema)]
+pub struct AstGrepArgs {/// One ast-grep pattern (`$NAME` one node, `$$$NAME` zero or more)
+    pat:String, /// File, directory or glob; `;`-separated list allowed (default `.`)
+    path:Option<String>, /// Language override (alias), e.g. `cpp` for `.h`
+    lang:Option<String>, /// Number of matches to skip, for pagination
+    skip:Option<f64>}
+#[derive(Debug,Deserialize,JsonSchema)]
+pub struct AstEditOp {/// ast-grep pattern to match
+    pat:String, /// Rewrite template; metavariables substitute; empty string deletes
+    out:String}
+#[derive(Debug,Deserialize,JsonSchema)]
+pub struct AstEditArgs {/// Rewrite operations (applied per language of each file)
+    ops:Vec<AstEditOp>, /// Files, directories or globs to rewrite
+    paths:Vec<String>}
+#[derive(Debug,Deserialize,JsonSchema)]
+pub struct ReasonArgs {/// One-sentence reason
+    reason:Option<String>}
 #[derive(Debug,Deserialize,JsonSchema)]
 pub struct JobArgs {/// Job id such as `bg_1`
     id:String}
@@ -193,6 +213,25 @@ impl CodingTools {
         let input=bash_tool::Input{command:args.command,timeout:args.timeout,cwd:args.cwd,pty:args.pty,background:args.background};
         let result=traced_async("bash",detail,async move{let (text,failed)=bash_tool::run(ctx,input).await;if failed{err(text)}else{ok(text)}}).await;
         self.deliver(result)
+    }
+    #[tool(description = "Structural code search via ast-grep: use when syntax shape matters more than text (calls, declarations). Narrow each call to one language; `pat` is ONE AST pattern (`$NAME` = one node, `$_` unbound, `$$$NAME` zero-or-more; a repeated metavariable must match identical code). Patterns must parse as a single AST node (wrap fragments, e.g. `class $_ { ... }`). Parse issues mean query failure, not absence. Results are `*N:text` rows (+ `meta:` captures) under `[path#TAG]` headers; 50 matches per page, use `skip`.")]
+    fn ast_grep(&self,Parameters(args):Parameters<AstGrepArgs>)->CallToolResult {
+        let detail=json!({"pat":brief(&args.pat),"path":args.path,"lang":args.lang});
+        self.deliver(traced("ast_grep",detail,||match ast_grep_tool::run(&self.root,&self.store,ast_grep_tool::Input{pat:args.pat,path:args.path,lang:args.lang,skip:args.skip}){Ok(t)=>ok(t),Err(e)=>err(e)}))
+    }
+    #[tool(description = "Structural AST-aware rewrites via ast-grep, for codemods where text replace is unsafe. Mixed-language paths are fine: each file is parsed in its own language. Metavariables in `pat` (`$A`, `$$$ARGS`) substitute into `out`; delete with empty `out`. Patterns match AST structure, not text; a repeated metavariable must match identical code; rewrite patterns must parse as a single AST node. Matches are STAGED as a proposal, not applied: finalize with `resolve` (apply) or `reject` (discard). Parse issues mean a malformed rewrite, not a clean no-op. For one-off text edits prefer `edit`.")]
+    fn ast_edit(&self,Parameters(args):Parameters<AstEditArgs>)->CallToolResult {
+        let detail=json!({"ops":args.ops.len(),"paths":args.paths});
+        let input=ast_edit_tool::Input{ops:args.ops.into_iter().map(|o|ast_edit_tool::Op{pat:o.pat,out:o.out}).collect(),paths:args.paths};
+        self.deliver(traced("ast_edit",detail,||match ast_edit_tool::run(&self.root,&self.store,&self.pending,input){Ok(t)=>ok(t),Err(e)=>err(e)}))
+    }
+    #[tool(description = "Apply the oldest staged `ast_edit` preview (write a one-sentence reason). Only valid while a preview is pending.")]
+    fn resolve(&self,Parameters(_args):Parameters<ReasonArgs>)->CallToolResult {
+        self.deliver(traced("resolve",json!({}),||match ast_edit_tool::resolve(&self.root,&self.store,&self.pending){Ok((t,stale))=>if stale{err(t)}else{ok(t)},Err(e)=>err(e)}))
+    }
+    #[tool(description = "Discard the oldest staged `ast_edit` preview without changing any file (write a one-sentence reason).")]
+    fn reject(&self,Parameters(args):Parameters<ReasonArgs>)->CallToolResult {
+        self.deliver(traced("reject",json!({}),||ok(ast_edit_tool::reject(&self.pending,args.reason.as_deref().unwrap_or("")))))
     }
     #[tool(description = "Wait only when blocked with nothing else to do. Blocks on background jobs you started; returns on the first result (or a still-running snapshot after a safety cap). Nothing running: errors. Results also arrive with your next tool result. NEVER poll while work remains.")]
     async fn wait(&self)->CallToolResult {

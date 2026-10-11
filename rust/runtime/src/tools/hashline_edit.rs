@@ -11,7 +11,7 @@ struct DiskWriter;
 fn io(error: impl std::fmt::Display) -> EditError { EditError::Writer(error.to_string()) }
 
 /// Writes next to the target and renames, so an I/O error never truncates the original.
-fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
+pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
     let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let tmp = target.with_extension(format!("ailocalhub-{}.tmp", uuid::Uuid::new_v4()));

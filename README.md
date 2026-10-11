@@ -60,6 +60,8 @@ The remote handshake depends on OpenAI authorization and configuration. Native `
 | --- | --- |
 | `read` | oh-my-pi style: `path` with selectors (`f.rs:50-80`, `:-5`, `:3,9-12`, `:raw`); text rows `N:text` under a `[path#TAG]` snapshot header; directories; PNG/JPEG/GIF/WebP/BMP as MCP image content |
 | `bash` | oh-my-pi style: `command`, `cwd`, `timeout` (0 = no deadline, else clamped 1-3600, default 300), `async`; merged stdout/stderr, `Wall time:` line, `Command exited with code N`; head+tail truncation with the full output at `artifact://<id>` (readable with `read`); commands still running 60s in (or 1s before `timeout`) move to background job `bg_N` |
+| `ast_grep` | oh-my-pi style structural search (ast-grep, tree-sitter): one pattern per call, `$NAME` / `$$$NAME` metavariables, `*N:text` rows with `meta:` captures under `file#TAG` headers, 50 matches per page; works for the 18 natively linked languages |
+| `ast_edit` | Structural rewrites (`ops: [{pat, out}]`, `paths`) staged as a diff proposal; nothing is written until `resolve` (apply) or `reject` (discard) |
 | `wait` | Blocks on background jobs (50s cap, then a still-running snapshot); settled job results are also appended to the next tool result |
 | `kill_job` | Cancels a background job (`bg_N`) |
 | `edit` | oh-my-pi **hashline** patches (`[path#TAG]` + `PUT`/`CUT`/`REM`/`MV`), stale-tag recovery, block ops, atomic apply; engine vendored from oh-my-pi |

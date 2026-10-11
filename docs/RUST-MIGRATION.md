@@ -110,4 +110,8 @@ Phase 3 (bash / wait) done with a **system bash backend**: `tools/bash_run.rs` (
 
 Bash deviations from omp: system `/bin/bash -c` per call instead of omp's persistent patched-brush shell with 60 in-process coreutils (no state persists between calls); no output minimizer; no PTY (`pty:true` is ignored with omp's notice); no `name`/`ready` service mode; MCP cannot start a turn, so settled jobs are appended to the next tool result and `wait` has a 50s cap (omp: 30 min); extra `kill_job` tool; worker-wide cap of 16 concurrent commands. `structuredContent` (exit_code, timed_out...) of the old tool was removed to match omp's text result.
 
-Not started: ast_grep/ast_edit, lsp, debug, eval (see plan).
+Phase 4 (ast_grep / ast_edit) done on the vendored `pi-ast`: `tools/ast_common.rs`, `ast_grep_tool.rs`, `ast_edit_tool.rs`. Real MCP test: `omp-ast-tools-smoke.mjs`.
+
+AST deviations from omp: omp's `xd://resolve` / `xd://reject` devices became the MCP tools `resolve` / `reject` (FIFO per session; same texts, including the stale-preview message); only the 18 linked grammars work (no on-demand wasm grammars, so other languages are skipped with a note); like omp, a stale preview is detected after the files were written.
+
+Not started: lsp, debug, eval (see plan).

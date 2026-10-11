@@ -22,6 +22,7 @@ name = "ai-local-hub-runtime"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "ast-grep-core",
  "async-stream",
  "async-trait",
  "axum",
@@ -35,6 +36,7 @@ dependencies = [
  "mime_guess",
  "os_pipe",
  "percent-encoding",
+ "pi-ast",
  "pi-edit",
  "rand 0.9.5",
  "regex",

@@ -8,6 +8,8 @@ rust-version = "1.85"
 anyhow = "1"
 async-trait = "0.1"
 pi-edit = { path = "../vendor/omp/pi-edit" }
+pi-ast = { path = "../vendor/omp/pi-ast" }
+ast-grep-core = { version = "0.39", default-features = false, features = ["tree-sitter"] }
 async-stream = "0.3"
 dirs = "6"
 percent-encoding = "2"
