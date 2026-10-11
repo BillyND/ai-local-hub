@@ -100,7 +100,17 @@ try {
    assert.notEqual((await secondClient.callTool({name:"write",arguments:{path:"isolated.txt",content:"second only"}})).isError,true);
    assert.equal(await readFile(join(otherRoot,"isolated.txt"),"utf8"),"second only");
  }finally{await secondClient.close();}
- assert.equal((await api("GET",`/instances/${id}/logs`)).status,200);
+ // Every tool call must leave one structured line in the instance Logs panel.
+ const logs=await api("GET",`/instances/${id}/logs`);
+ assert.equal(logs.status,200);
+ const toolLog=logs.data.lines.map(line=>{try{return JSON.parse(line)}catch{return null}}).find(r=>r?.tool==="write");
+ assert.ok(toolLog,"write call is logged");
+ assert.equal(toolLog.msg,"tool write ok");
+ assert.equal(toolLog.level,"INFO");
+ assert.equal(toolLog.path,"native.txt");
+ assert.equal(toolLog.bytes,"rust worker".length);
+ assert.equal(typeof toolLog.duration_ms,"number");
+ assert.ok(!Number.isNaN(Date.parse(toolLog.time)),"ISO time");
  assert.equal((await api("POST",`/instances/${id}/stop`,{})).status,200);
  await waitFor(async()=>(await api("GET","/state")).data.instances.find(i=>i.id===id).status.state==="stopped","stop first worker");
  assert.equal((await api("GET","/state")).data.instances.find(i=>i.id===secondId).status.state,"running");
