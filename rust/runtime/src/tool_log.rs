@@ -41,7 +41,8 @@ fn record(tool: &str, detail: Value, started: Instant, result: &CallToolResult) 
     fields.insert("level".into(), json!(if failed { "ERROR" } else { "INFO" }));
     fields.insert("msg".into(), json!(format!("tool {tool} {}", if failed { "failed" } else { "ok" })));
     fields.insert("tool".into(), json!(tool));
-    if let Value::Object(map) = detail { fields.extend(map); }
+    // Unset optional arguments (null) are noise in the log.
+    if let Value::Object(map) = detail { fields.extend(map.into_iter().filter(|(_, v)| !v.is_null())); }
     fields.insert("duration_ms".into(), json!(started.elapsed().as_millis() as u64));
     if failed { if let Some(error) = error_text(result) { fields.insert("error".into(), json!(error)); } }
     println!("{}", json!({"type": "log", "message": Value::Object(fields).to_string()}));

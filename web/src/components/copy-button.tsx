@@ -4,13 +4,13 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
-export function CopyButton({ value, label }: { value: string; label: string }) {
+export function CopyButton({ value, label }: { value: string | (() => string); label: string }) {
   const [copied, setCopied] = useState(false)
 
   const copy = async (e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      await navigator.clipboard.writeText(value)
+      await navigator.clipboard.writeText(typeof value === 'function' ? value() : value)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {

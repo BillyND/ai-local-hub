@@ -1,8 +1,10 @@
 import { PlusIcon, ServerOffIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { useUiStore } from '@/stores/ui-store'
 
-export function EmptyState({ onAdd }: { onAdd: () => void }) {
+export function EmptyState() {
+  const openAdd = useUiStore((s) => s.openAdd)
   return (
     <Card className="items-center gap-3 border-dashed py-12 text-center shadow-none">
       <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -12,7 +14,7 @@ export function EmptyState({ onAdd }: { onAdd: () => void }) {
       <p className="max-w-sm px-4 text-sm text-muted-foreground">
         Each instance connects one ChatGPT account through one OpenAI tunnel to a workspace folder on this machine.
       </p>
-      <Button onClick={onAdd}><PlusIcon />Add instance</Button>
+      <Button onClick={openAdd}><PlusIcon />Add instance</Button>
     </Card>
   )
 }

@@ -5,19 +5,15 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FolderBrowserDialog } from '@/components/folder-browser-dialog'
-import type { InstanceInput, InstanceView } from '@/lib/types'
+import { useShallow } from 'zustand/react/shallow'
+import { submitInstance } from '@/stores/actions'
+import { useManagerStore } from '@/stores/manager-store'
+import { useUiStore } from '@/stores/ui-store'
 
-interface Props {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  /** Instance being edited, or null when adding. */
-  instance: InstanceView | null
-  homeDir: string
-  onSubmit: (input: InstanceInput) => Promise<void>
-}
-
-export function InstanceFormDialog({ open, onOpenChange, instance, homeDir, onSubmit }: Props) {
-  const editing = instance !== null
+export function InstanceFormDialog() {
+  const { open, editId } = useUiStore(useShallow((s) => ({ open: s.form !== null, editId: s.form?.mode === 'edit' ? s.form.id : null })))
+  const closeForm = useUiStore((s) => s.closeForm)
+  const editing = editId !== null
   const [name, setName] = useState('')
   const [workspaceRoot, setWorkspaceRoot] = useState('')
   const [tunnelId, setTunnelId] = useState('')
@@ -27,8 +23,11 @@ export function InstanceFormDialog({ open, onOpenChange, instance, homeDir, onSu
   const [pending, setPending] = useState(false)
   const [browsing, setBrowsing] = useState(false)
 
+  // Seeds the fields once per open. Live status updates must not reset what the user is typing.
   useEffect(() => {
     if (!open) return
+    const { byId, homeDir } = useManagerStore.getState()
+    const instance = editId ? byId[editId] : undefined
     setName(instance?.name ?? '')
     setWorkspaceRoot(instance?.workspaceRoot ?? homeDir)
     setTunnelId(instance?.tunnelId ?? '')
@@ -36,7 +35,7 @@ export function InstanceFormDialog({ open, onOpenChange, instance, homeDir, onSu
     setShowKey(false)
     setError(null)
     setPending(false)
-  }, [open, instance, homeDir])
+  }, [open, editId])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -44,8 +43,8 @@ export function InstanceFormDialog({ open, onOpenChange, instance, homeDir, onSu
     setPending(true)
     setError(null)
     try {
-      await onSubmit({ name: name.trim(), workspaceRoot: workspaceRoot.trim(), tunnelId: tunnelId.trim(), apiKey })
-      onOpenChange(false)
+      await submitInstance({ name: name.trim(), workspaceRoot: workspaceRoot.trim(), tunnelId: tunnelId.trim(), apiKey })
+      closeForm()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed')
     } finally {
@@ -55,7 +54,7 @@ export function InstanceFormDialog({ open, onOpenChange, instance, homeDir, onSu
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={(o) => !o && closeForm()}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit instance' : 'Add instance'}</DialogTitle>
@@ -98,7 +97,7 @@ export function InstanceFormDialog({ open, onOpenChange, instance, homeDir, onSu
             </div>
             {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={closeForm}>Cancel</Button>
               <Button type="submit" disabled={pending}>
                 {pending && <LoaderCircleIcon className="animate-spin" />}
                 {editing ? 'Save changes' : 'Add instance'}
