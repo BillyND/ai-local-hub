@@ -22,7 +22,10 @@ pub fn run(root: &Path, store: &EditStore, path: &str, content: Option<String>) 
     if text.len() > 32 * 1024 * 1024 { return Err("Write exceeds the 32 MiB limit".into()); }
     if let Some(parent) = abs.parent() { fs::create_dir_all(parent).map_err(|e| format!("Could not write {display}: {e}"))?; }
     fs::write(&abs, &text).map_err(|e| format!("Could not write {display}: {e}"))?;
+    #[cfg(unix)]
     let mut notes = String::new();
+    #[cfg(not(unix))]
+    let notes = String::new();
     #[cfg(unix)]
     if text.starts_with("#!") {
         use std::os::unix::fs::PermissionsExt;
