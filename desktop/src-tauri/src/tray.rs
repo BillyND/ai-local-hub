@@ -8,7 +8,7 @@ use crate::show_main;
 
 /// Menu-bar / notification-area icon with Show and Quit. Quitting stops every instance.
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show Workspace Tools", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show ChatGPT Local Tools", true, None::<&str>)?;
     let quit = MenuItem::with_id(
         app,
         "quit",
@@ -18,7 +18,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let menu = Menu::with_items(app, &[&show, &PredefinedMenuItem::separator(app)?, &quit])?;
     let mut builder = TrayIconBuilder::with_id("main")
-        .tooltip("Workspace Tools")
+        .tooltip("ChatGPT Local Tools")
         .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| match event.id.as_ref() {

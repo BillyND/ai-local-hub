@@ -1,5 +1,5 @@
 // Prepares everything the Tauri bundle embeds, for one target:
-//   desktop/src-tauri/binaries/wtm-bun-<triple>[.exe]  the Bun runtime (sidecar)
+//   desktop/src-tauri/binaries/chatgpt-local-tools-bun-<triple>[.exe]  the Bun runtime (sidecar)
 //   desktop/src-tauri/resources/app/                   package.json + dist/ (manager, worker, UI)
 //
 // Usage: node scripts/stage-desktop.mjs [--target <rust-triple>] [--skip-stale-check]   (default: host, or
@@ -20,7 +20,7 @@ const BUN_ASSETS = {
   "aarch64-unknown-linux-gnu": "bun-linux-aarch64",
   "x86_64-pc-windows-msvc": "bun-windows-x64",
 };
-const APP_FILES = ["app.mjs", "worker.mjs", "image-resize-worker.js", "photon_rs_bg.wasm"];
+const APP_FILES = ["chatgpt-local-tools.mjs", "chatgpt-local-tools-worker.mjs", "image-resize-worker.js", "photon_rs_bg.wasm"];
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(root, "desktop");
@@ -73,7 +73,7 @@ async function stageRuntime(triple) {
   if (!name) throw new Error(`The bun executable was not found inside ${asset}.zip`);
   const binaries = join(desktop, "src-tauri", "binaries");
   mkdirSync(binaries, { recursive: true });
-  const output = join(binaries, `wtm-bun-${triple}${windows ? ".exe" : ""}`);
+  const output = join(binaries, `chatgpt-local-tools-bun-${triple}${windows ? ".exe" : ""}`);
   writeFileSync(output, entries[name]);
   chmodSync(output, 0o755);
   return output;
@@ -95,7 +95,7 @@ function stageApp() {
   // Staging a stale build would silently ship old code; refuse instead (modification times are
   // compared, so pass --skip-stale-check if a checkout or cache restore skews them).
   const sources = ["src", "web/src", "web/public", "web/index.html", "scripts/bundle.mjs", "package.json"].map((p) => join(root, p));
-  const built = Math.min(statSync(join(dist, "app.mjs")).mtimeMs, statSync(join(dist, "web", "index.html")).mtimeMs);
+  const built = Math.min(statSync(join(dist, "chatgpt-local-tools.mjs")).mtimeMs, statSync(join(dist, "web", "index.html")).mtimeMs);
   const changed = process.argv.includes("--skip-stale-check")
     ? undefined
     : sources.find((source) => existsSync(source) && newestMtime(source) > built);
@@ -107,7 +107,7 @@ function stageApp() {
   cpSync(join(dist, "web"), join(target, "dist", "web"), { recursive: true });
   const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   // app.mjs reads ../package.json for its version and needs "type": "module" for the .js worker.
-  writeFileSync(join(target, "package.json"), `${JSON.stringify({ name: "workspace-tools-mcp", version, private: true, type: "module" }, null, 2)}\n`);
+  writeFileSync(join(target, "package.json"), `${JSON.stringify({ name: "chatgpt-local-tools", version, private: true, type: "module" }, null, 2)}\n`);
   return target;
 }
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Workspace Tools",
+  "productName": "ChatGPT Local Tools",
   "version": "../../package.json",
-  "identifier": "com.workspacetools.mcp",
+  "identifier": "com.chatgptlocaltools.desktop",
   "build": {
     "frontendDist": "../splash"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Workspace Tools Manager",
+        "title": "ChatGPT Local Tools",
         "width": 1180,
         "height": 780,
         "minWidth": 420,
@@ -30,7 +30,7 @@
     "category": "DeveloperTool",
     "shortDescription": "Local coding tools for ChatGPT and MCP clients",
     "longDescription": "Manage several ChatGPT accounts, each with its own OpenAI tunnel, exposing local coding tools over MCP.",
-    "externalBin": ["binaries/wtm-bun"],
+    "externalBin": ["binaries/chatgpt-local-tools-bun"],
     "resources": { "resources/app/": "app/" },
     "macOS": {
       "minimumSystemVersion": "11.0",

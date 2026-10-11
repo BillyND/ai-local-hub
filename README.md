@@ -1,6 +1,6 @@
-# workspace-tools-mcp
+# ChatGPT Local Tools
 
-A local MCP server exposing Pi's built-in coding tools directly to ChatGPT Web and other MCP clients. ChatGPT remains the agent; this project does not run a second model or reimplement Pi's tool behavior.
+An independently developed local MCP server exposing Pi's built-in coding tools directly to ChatGPT Web and other MCP clients. ChatGPT remains the agent; this project does not run a second model or reimplement Pi's tool behavior.
 
 ## Requirements
 
@@ -20,6 +20,8 @@ npm start
 
 In the UI you can add, edit and delete instances, start or stop each one (or all), pick the workspace folder with a folder browser, copy the MCP URL, and watch live logs. `Quit` (or Ctrl+C in the terminal) stops every instance and exits. Running `npm start` again while a manager is already running just reopens it.
 
+For backward compatibility with existing installations, the renamed app keeps the original settings/cache directories and existing `WORKSPACE_TOOLS_*` environment variables. No instance or API key needs to be re-entered.
+
 Instances are stored in `~/.config/workspace-tools-mcp/config.json` with a private `0600` file mode, including API keys. API keys are write-only in the UI: they are never sent back to the browser, and logs are redacted. Files from earlier single-instance releases are migrated automatically to one instance named `default`. Editing a running instance saves the new settings but they apply the next time it starts.
 
 ```bash
@@ -33,7 +35,7 @@ npm start -- --reset           # delete saved settings and exit
 
 **The web UI controls instances that give the connected ChatGPT account full shell and filesystem access, so it is locked down:** it binds to `127.0.0.1` only, requires a random per-launch token (the first visit exchanges the link's token for an `HttpOnly`, `SameSite=Strict` cookie), rejects foreign `Host` headers (DNS rebinding) and cross-origin or non-JSON changes, and sends a strict Content-Security-Policy. Anyone who can read the link printed in your terminal can control the manager, so do not share it. Headless mode (`--headless`) has no UI and no listener.
 
-**Memory and CPU.** `npm run build` bundles the manager (`dist/app.mjs`, no Pi SDK) and each worker (`dist/worker.mjs`, Pi's tool factories only, plus `dist/image-resize-worker.js` and `photon_rs_bg.wasm` for image reads). Measured on macOS arm64 with Node 22 and local-only instances: the manager idles at about 60 MB and each worker at about 90 MB RSS, with ~0% idle CPU (3 instances: ~330 MB total; the unbundled build needed ~500 MB). Real tunnels add the official tunnel-client process per instance, which is not included in these numbers. Logs are kept in memory only, 1000 lines per instance, cleared when the instance restarts.
+**Memory and CPU.** `npm run build` bundles the manager (`dist/chatgpt-local-tools.mjs`, no Pi SDK) and each worker (`dist/chatgpt-local-tools-worker.mjs`, Pi's tool factories only, plus `dist/image-resize-worker.js` and `photon_rs_bg.wasm` for image reads). Measured on macOS arm64 with Node 22 and local-only instances: the manager idles at about 60 MB and each worker at about 90 MB RSS, with ~0% idle CPU (3 instances: ~330 MB total; the unbundled build needed ~500 MB). Real tunnels add the official tunnel-client process per instance, which is not included in these numbers. Logs are kept in memory only, 1000 lines per instance, cleared when the instance restarts.
 
 ### Developing the UI
 
@@ -46,7 +48,7 @@ npm run dev:web                          # terminal 2: Vite on http://127.0.0.1:
 
 ## Desktop app (macOS, Windows, Linux)
 
-The desktop app is a thin [Tauri 2](https://tauri.app) shell around the same manager and web UI: one window that loads the UI served by the embedded manager, so there is no second UI to maintain. It bundles its own [Bun](https://bun.sh) runtime (pinned, checksum-verified), so users need nothing installed.
+ChatGPT Local Tools is a thin [Tauri 2](https://tauri.app) shell around the same manager and web UI: one window that loads the UI served by the embedded manager, so there is no second UI to maintain. It bundles its own [Bun](https://bun.sh) runtime (pinned, checksum-verified), so users need nothing installed.
 
 - **Start:** opening the app starts the manager and shows the UI. If a manager is already running (for example `npm start`), the app attaches to it instead of starting another and leaves it running when the window closes; if that manager is stopped (its Quit button or Ctrl+C), the app closes too. If the manager fails to start or hangs for 30 s, the window shows the reason instead of a blank page.
 - **Close vs quit:** on macOS and Windows, closing the window keeps your instances running in the background (menu-bar or tray icon: *Show*, *Quit and stop all instances*; reopen from the Dock on macOS). On Linux there is no dependable tray, so closing the window quits. The UI's *Quit* button and the tray's Quit always stop every instance.
@@ -72,6 +74,8 @@ Installers are written to `desktop/src-tauri/target/release/bundle/` (`.dmg`/`.a
 | --- | --- |
 | `WORKSPACE_TOOLS_CONFIG_FILE` | Optional saved-config path; defaults to `~/.config/workspace-tools-mcp/config.json` |
 | `WORKSPACE_TOOLS_CACHE_DIR` | Optional cache root; defaults to the saved `cacheDir`, then `~/.cache/workspace-tools-mcp` |
+
+The `workspace-tools-mcp` storage paths, `wtm_session` cookie, `wtm-theme` preference and MCP metadata namespaces remain unchanged to preserve compatibility. The changed Tauri app identifier means the OS may treat this as a separate installed app from the old name.
 
 The manager passes each worker its workspace, tunnel ID and key through that worker's environment only (never argv) and the worker removes the key from its own environment before any tool runs. The tunnel client is downloaded once by the manager and shared by all workers. Never commit credentials.
 

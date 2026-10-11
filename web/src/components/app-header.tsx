@@ -29,7 +29,7 @@ export function AppHeader({ instances, localOnly, reconnecting, busy, onAdd, onS
           <TerminalSquareIcon className="size-5" />
         </div>
         <div className="min-w-0">
-          <h1 className="truncate text-lg leading-tight font-semibold">Workspace Tools Manager</h1>
+          <h1 className="truncate text-lg leading-tight font-semibold">ChatGPT Local Tools</h1>
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
             <span>
               {instances.length} {instances.length === 1 ? 'instance' : 'instances'} · {running} running

@@ -1,8 +1,8 @@
 {
-  "name": "workspace-tools-desktop",
+  "name": "chatgpt-local-tools-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Tauri desktop shell for Workspace Tools MCP",
+  "description": "Tauri desktop shell for ChatGPT Local Tools",
   "scripts": {
     "tauri": "tauri",
     "stage": "node ../scripts/stage-desktop.mjs",

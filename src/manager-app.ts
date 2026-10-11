@@ -62,7 +62,7 @@ export async function runManagerApp(
       process.stdout.write(`${JSON.stringify({ type: "ready", url: existing, owner: false })}\n`);
       return 0;
     }
-    console.log(`Workspace Tools MCP is already running (pid ${lock.existing.pid}).\nOpen: ${existing}`);
+    console.log(`ChatGPT Local Tools is already running (pid ${lock.existing.pid}).\nOpen: ${existing}`);
     if (options.open) openBrowser(existing);
     return 0;
   }
@@ -75,7 +75,7 @@ export async function runManagerApp(
     process.stdin.on("close", requestStop);
     process.stdin.resume();
   } else {
-    console.log(`Workspace Tools MCP is running.\nOpen: ${link}\nPress Ctrl+C to stop all instances and quit.`);
+    console.log(`ChatGPT Local Tools is running.\nOpen: ${link}\nPress Ctrl+C to stop all instances and quit.`);
     if (options.open) openBrowser(link);
   }
   process.once("SIGINT", requestStop);

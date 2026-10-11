@@ -24,9 +24,9 @@ const flag = process.argv.indexOf("--target");
 const triple = (flag >= 0 && process.argv[flag + 1]) || HOST_TRIPLES[`${process.platform}-${process.arch}`];
 if (!triple) throw new Error(`Unsupported host ${process.platform}-${process.arch}`);
 
-const runtime = join(root, "desktop", "src-tauri", "binaries", `wtm-bun-${triple}${triple.includes("windows") ? ".exe" : ""}`);
+const runtime = join(root, "desktop", "src-tauri", "binaries", `chatgpt-local-tools-bun-${triple}${triple.includes("windows") ? ".exe" : ""}`);
 const dist = join(root, "desktop", "src-tauri", "resources", "app", "dist");
-for (const path of [runtime, join(dist, "app.mjs")])
+for (const path of [runtime, join(dist, "chatgpt-local-tools.mjs")])
   if (!existsSync(path)) throw new Error(`${path} is missing. Run node scripts/stage-desktop.mjs first.`);
 
 const check = (condition, message) => {
@@ -45,7 +45,7 @@ writeFileSync(
 );
 const env = { ...process.env, WORKSPACE_TOOLS_CONFIG_FILE: join(work, "config.json"), WORKSPACE_TOOLS_CACHE_DIR: join(work, "cache") };
 
-const manager = spawn(runtime, ["--no-install", "--no-env-file", join(dist, "app.mjs"), "--desktop", "--local-only"], {
+const manager = spawn(runtime, ["--no-install", "--no-env-file", join(dist, "chatgpt-local-tools.mjs"), "--desktop", "--local-only"], {
   cwd: dist,
   env,
   stdio: ["pipe", "pipe", "pipe"],
@@ -73,7 +73,7 @@ try {
     return response.status === 204 ? null : response.json();
   };
   const page = await fetch(base + "/", { headers: { cookie } });
-  check(page.status === 200 && /<title>Workspace Tools Manager<\/title>/.test(await page.text()), "the bundled web UI is served");
+  check(page.status === 200 && /<title>ChatGPT Local Tools<\/title>/.test(await page.text()), "the bundled web UI is served");
 
   await api("POST", "/api/instances/i1/start");
   for (let i = 0; i < 300 && !mcpUrl; i += 1) {

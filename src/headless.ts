@@ -9,7 +9,7 @@ export async function runHeadless(
   manager: InstanceManager,
   instances: readonly InstanceConfig[],
 ): Promise<number> {
-  const write = (text: string): void => void process.stderr.write(`[workspace-tools-mcp] ${text}\n`);
+  const write = (text: string): void => void process.stderr.write(`[chatgpt-local-tools] ${text}\n`);
   if (instances.length === 0) {
     write("No instances to start. Run npm start and add one in the web UI.");
     return 1;

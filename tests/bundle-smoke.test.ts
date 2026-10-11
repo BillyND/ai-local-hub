@@ -9,9 +9,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InstanceManager } from "../src/instance-manager.js";
 
-// Exercises the production worker bundle (dist/worker.mjs, built by npm run build) end to end:
+// Exercises the production worker bundle (dist/chatgpt-local-tools-worker.mjs, built by npm run build) end to end:
 // the bundle drops most of the Pi SDK, so every tool must still work.
-const worker = new URL("../dist/worker.mjs", import.meta.url).pathname;
+const worker = new URL("../dist/chatgpt-local-tools-worker.mjs", import.meta.url).pathname;
 const PNG_1X1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
@@ -43,7 +43,7 @@ type Content = { type: string; text?: string; data?: string; mimeType?: string }
 const textOf = (result: unknown): string =>
   ((result as { content: Content[] }).content ?? []).map((c) => c.text ?? "").join("");
 
-test("the bundled worker serves every tool", { skip: !existsSync(worker) && "dist/worker.mjs not built" }, async () => {
+test("the bundled worker serves every tool", { skip: !existsSync(worker) && "dist/chatgpt-local-tools-worker.mjs not built" }, async () => {
   const root = await mkdtemp(join(tmpdir(), "workspace-tools-bundle-"));
   // WTM_TEST_RUNTIME=/path/to/bun runs the same checks with another runtime.
   const runtime = process.env.WTM_TEST_RUNTIME || undefined;

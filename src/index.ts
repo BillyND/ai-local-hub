@@ -14,7 +14,7 @@ const DEFAULT_PORT = 4747;
 
 const HELP = `Usage: npm start [-- --port <n> | --no-open | --local-only | --headless | --instance <name> | --reset]
 
-Workspace Tools MCP — local coding tools for ChatGPT and MCP clients.
+ChatGPT Local Tools — local coding tools for ChatGPT and MCP clients.
 Starts a manager with a local web UI (opened in your browser) where each instance has its
 own Tunnel ID, API key and workspace and runs as its own process. Settings are saved
 privately in ~/.config/workspace-tools-mcp/config.json (permissions 600).
@@ -94,7 +94,7 @@ main().then(
   (error: unknown) => {
     // Messages come from our own validation; never print raw third-party errors with secrets.
     process.stderr.write(
-      `[workspace-tools-mcp] ${error instanceof Error ? error.message : "Failed."}\n`,
+      `[chatgpt-local-tools] ${error instanceof Error ? error.message : "Failed."}\n`,
     );
     process.exitCode = 1;
   },

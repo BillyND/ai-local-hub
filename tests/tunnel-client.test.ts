@@ -30,7 +30,7 @@ if (args[0] === 'run' && process.env.CONTROL_PLANE_API_KEY !== 'sk-secret-value'
 appendFileSync(logFile, JSON.stringify({ args }) + '\\n');
 if (args[0] === 'init') {
   mkdirSync(profileDir, { recursive: true });
-  writeFileSync(join(profileDir, 'workspace-tools-mcp.yaml'), 'control_plane_api_key: env:CONTROL_PLANE_API_KEY\\n');
+  writeFileSync(join(profileDir, 'chatgpt-local-tools.yaml'), 'control_plane_api_key: env:CONTROL_PLANE_API_KEY\\n');
   process.exit(0);
 }
 if (args[0] === 'run') {
@@ -68,9 +68,9 @@ test("fake tunnel executable fixture: start waits for readyz and keeps API key o
     });
     const ready = await fetch(`${handle.healthUrl}/readyz`);
     assert.equal(ready.status, 200);
-    assert.equal(handle.profile, "workspace-tools-mcp");
+    assert.equal(handle.profile, "chatgpt-local-tools");
     const profile = await readFile(
-      join(dir, "runtime", "workspace-tools-mcp.yaml"),
+      join(dir, "runtime", "chatgpt-local-tools.yaml"),
       "utf8",
     );
     assert.match(profile, /env:CONTROL_PLANE_API_KEY/);

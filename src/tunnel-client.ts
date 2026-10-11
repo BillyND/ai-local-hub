@@ -24,7 +24,7 @@ export interface TunnelHandle {
 
 const STARTUP_MS = 30_000;
 const INIT_MS = 15_000;
-const PROFILE = "workspace-tools-mcp";
+const PROFILE = "chatgpt-local-tools";
 
 function abortError(signal?: AbortSignal): Error {
   return signal?.reason instanceof Error

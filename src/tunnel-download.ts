@@ -352,7 +352,7 @@ async function fetchWithDeadline(
 ): Promise<Response> {
   const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const response = await fetch(url, {
-    headers: { "User-Agent": "workspace-tools-mcp", ...headers },
+    headers: { "User-Agent": "chatgpt-local-tools", ...headers },
     signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
   });
   if (!response.ok)
