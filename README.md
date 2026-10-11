@@ -58,12 +58,14 @@ The remote handshake depends on OpenAI authorization and configuration. Native `
 
 | Tool | Behavior |
 | --- | --- |
-| `read` | UTF-8 text, line `offset`/`limit`, PNG/JPEG/GIF/WebP/BMP as MCP image content |
-| `bash` | Execute shell commands under the instance workspace; stdout/stderr, exit code, timeout |
-| `edit` | Exact, unique, nonoverlapping string replacements; validates before writing |
-| `write` | Write/create a file and parent folders |
-| `grep` | Regex/literal content search, `.gitignore`, glob filter and context |
-| `find` | Glob path search, `.gitignore` |
+| `read` | oh-my-pi style: `path` with selectors (`f.rs:50-80`, `:-5`, `:3,9-12`, `:raw`); text rows `N:text` under a `[path#TAG]` snapshot header; directories; PNG/JPEG/GIF/WebP/BMP as MCP image content |
+| `bash` | oh-my-pi style: `command`, `cwd`, `timeout` (0 = no deadline, else clamped 1-3600, default 300), `async`; merged stdout/stderr, `Wall time:` line, `Command exited with code N`; head+tail truncation with the full output at `artifact://<id>` (readable with `read`); commands still running 60s in (or 1s before `timeout`) move to background job `bg_N` |
+| `wait` | Blocks on background jobs (50s cap, then a still-running snapshot); settled job results are also appended to the next tool result |
+| `kill_job` | Cancels a background job (`bg_N`) |
+| `edit` | oh-my-pi **hashline** patches (`[path#TAG]` + `PUT`/`CUT`/`REM`/`MV`), stale-tag recovery, block ops, atomic apply; engine vendored from oh-my-pi |
+| `write` | Write/create a file and parent folders; returns a fresh `[path#TAG]`; strips pasted hashline prefixes; refuses generated files |
+| `grep` | oh-my-pi style: `path` is a `;`-separated list of files/dirs/globs (bare `*.ts` recurses), `case`, `gitignore`, `skip` (20 files/page), file selectors `f.ts:50-100`; Rust regex with look-around fallback; grouped `*N:text` rows under `file#TAG` headers |
+| `glob` | oh-my-pi style path/pattern search: `;`-separated list, `hidden`, `gitignore`, `limit` (max 200), newest first, grouped by directory |
 | `ls` | Sorted directory listing |
 
 Relative paths use the configured workspace as the working directory. **It is not a sandbox.** Absolute paths and arbitrary shell access are intentionally permitted; connect only trusted AI clients.
@@ -99,6 +101,7 @@ A Tauri release compilation can be checked with `cd desktop && ./node_modules/.b
 ## Repository layout
 
 ```text
+rust/vendor/omp/                   # vendored oh-my-pi crates (MIT): hashline edit engine, see NOTICE.md
 rust/runtime/
   src/bin/ai-local-hub-manager.rs  # native manager CLI
   src/manager_*.rs                 # state/config/HTTP/SSE

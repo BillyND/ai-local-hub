@@ -10,7 +10,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const root = await mkdtemp(join(tmpdir(), "ai-local-hub-rust-"));
 const bin = process.argv[2] || fileURLToPath(new URL("../target/debug/"+(process.platform==="win32"?"ai-local-hub-runtime.exe":"ai-local-hub-runtime"),import.meta.url));
 const worker = spawn(bin, ["--local-only"], {
-    env: { ...process.env, WORKSPACE_ROOT: root }, stdio: ["pipe", "pipe", "pipe"]
+    env: { ...process.env, WORKSPACE_ROOT: root, AI_LOCAL_HUB_AUTO_BG_SECS: "off" }, stdio: ["pipe", "pipe", "pipe"]
 });
 let stdout = "", stderr = "";
 worker.stderr.on("data", c => stderr += c);
@@ -33,22 +33,24 @@ try {
   const url=await Promise.race([ready,new Promise((_,r)=>setTimeout(()=>r(new Error("Timed out waiting for Rust worker: "+stderr)),10000))]);
   await client.connect(new StreamableHTTPClientTransport(new URL(url)));
   const tools = (await client.listTools()).tools.map(t=>t.name);
-  for(const name of ["read","bash","edit","write","grep","find","ls"])assert.ok(tools.includes(name),name);
+  for(const name of ["read","bash","edit","write","grep","glob","ls"])assert.ok(tools.includes(name),name);
   const call = (name,args) => client.callTool({name,arguments:args});
   const text = r=>r.content.find(c=>c.type==="text")?.text || "";
   assert.notEqual((await call("write",{path:"sample.txt",content:"one\nneedle\n"})).isError,true);
   assert.equal(await readFile(join(root,"sample.txt"),"utf8"),"one\nneedle\n");
-  assert.match(text(await call("read",{path:"sample.txt",offset:2,limit:1})),/needle/);
-  assert.notEqual((await call("edit",{path:"sample.txt",edits:[{oldText:"needle",newText:"changed"}]})).isError,true);
+  const sampleRead=text(await call("read",{path:"sample.txt:2-2"}));
+  assert.match(sampleRead,/2:needle/);
+  const sampleTag=sampleRead.match(/#([0-9A-F]{4})\]/)[1];
+  assert.notEqual((await call("edit",{input:`[sample.txt#${sampleTag}]\nPUT 2.=2:\n+changed\n`})).isError,true);
   assert.match(await readFile(join(root,"sample.txt"),"utf8"),/changed/);
   assert.match(text(await call("grep",{pattern:"changed"})),/sample.txt/);
-  assert.match(text(await call("find",{pattern:"*.txt"})),/sample.txt/);
+  assert.match(text(await call("glob",{path:"*.txt"})),/sample.txt/);
   assert.match(text(await call("ls",{})),/sample.txt/);
   const shell=await call("bash",{command:"printf out; printf err >&2; exit 7"});
   assert.equal(shell.isError,true);
   assert.match(text(shell),/out/);
   assert.match(text(shell),/err/);
-  assert.equal(shell.structuredContent.exit_code,7);
+  assert.match(text(shell),/Command exited with code 7/);
   const img=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4AQEFAPr/AP8AAP8FAAH/+lyI0QAAAABJRU5ErkJggg==","base64");
   await writeFile(join(root,"pixel.png"),img);
   assert.equal((await call("read",{path:"pixel.png"})).content[0].type,"image");

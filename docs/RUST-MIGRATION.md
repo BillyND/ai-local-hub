@@ -86,3 +86,28 @@ Still **not** guaranteed:
 - App installation / self-update / signing / notarization, remote tunnel end-to-end for the *latest* build, x86 macOS, Windows and Linux need platform-specific validation.
 - A numeric 100% line/branch code-coverage claim would be misleading without an instrumented coverage measurement and comprehensive platform tests.
 - The current source fixes are not automatically deployed to the already-running /Applications app. Do not overwrite a running MCP process during an active ChatGPT session.
+
+## oh-my-pi tool parity (11 October 2026)
+
+Goal: approach oh-my-pi (omp) tool behaviour. Plan: `plans/261011-1400-omp-tool-parity/plan.md`.
+
+Done (phase 1: read / write / edit):
+- Vendored omp crates `pi-edit`, `pi-diff`, `pi-ast`, `pi-walker`, `pi-vfs` in `rust/vendor/omp` (MIT, see `NOTICE.md`). All 349 `pi-edit` tests pass on stable Rust (`scripts/test-cargo.mjs`).
+- `edit` is the omp hashline tool (`{input}`), `read` takes selectors in `path`, `write` mints snapshot tags. Per MCP session `EditStore` keeps snapshots and seen lines.
+- Real MCP-client test: `rust/runtime/tests/omp-file-tools-smoke.mjs`.
+
+Known deviations from omp:
+- `pi-ast` built without tree-sitter `wasm`: only the 18 linked grammars work for block ops; other languages degrade (block `N*` ops fail with a clear message). tree-sitter-go is the crates.io release.
+- `read`: no structural summaries of long code files, no block-context rows, no PDF/video/sqlite/archive/URL/jq views, simplified directory listing, multi-range joined by a `…` row.
+- `write`: no read-projection / read-selector-misfire guards yet; writes are not atomic (omp's are not either).
+- Worker binary grew from ~12 MiB to ~27 MiB (tree-sitter grammars; measured on macOS arm64 release).
+
+Phase 2 (grep / glob) done: `tools/grep_*.rs`, `tools/glob_tool.rs`, `search_*.rs`, `tree_output.rs`. Real MCP test: `omp-search-tools-smoke.mjs`. `find` was replaced by `glob` (omp's `find` is LLM-judged semantic search and is not implemented).
+
+Grep/glob deviations from omp: matcher is Rust regex with a `fancy-regex` fallback instead of PCRE2; multi-path scopes always fan out per path (omp sometimes collapses to one walk, which can change file order); no internal-URL, archive or external-URL scopes; the walker is the `ignore` crate, not omp's pi-walker (global-gitignore rules may differ outside git repos); binary files are cut at the first NUL byte.
+
+Phase 3 (bash / wait) done with a **system bash backend**: `tools/bash_run.rs` (merged pipe, TERM then KILL of the process group, timeout, cancel), `bash_output.rs` (head+tail, column cap, notices), `bash_jobs.rs` (`bg_N` registry, `wait`, delivery with the next tool result), `bash_tool.rs` (leading-`cd` lift, timeout clamp, auto-background), `artifacts.rs`. Real MCP test: `omp-bash-tools-smoke.mjs`.
+
+Bash deviations from omp: system `/bin/bash -c` per call instead of omp's persistent patched-brush shell with 60 in-process coreutils (no state persists between calls); no output minimizer; no PTY (`pty:true` is ignored with omp's notice); no `name`/`ready` service mode; MCP cannot start a turn, so settled jobs are appended to the next tool result and `wait` has a 50s cap (omp: 30 min); extra `kill_job` tool; worker-wide cap of 16 concurrent commands. `structuredContent` (exit_code, timed_out...) of the old tool was removed to match omp's text result.
+
+Not started: ast_grep/ast_edit, lsp, debug, eval (see plan).

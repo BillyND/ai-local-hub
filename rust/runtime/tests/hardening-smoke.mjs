@@ -10,7 +10,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const root=await mkdtemp(join(tmpdir(),"ai-local-hub-hardening-"));
 const bin=resolve("rust/runtime/target/debug",process.platform==="win32"?"ai-local-hub-runtime.exe":"ai-local-hub-runtime");
 const worker=spawn(bin,["--local-only"],{
-  env:{...process.env,WORKSPACE_ROOT:root,PATH:process.platform==="darwin"?"/usr/bin:/bin:/usr/sbin:/sbin":process.env.PATH},
+  env:{...process.env,WORKSPACE_ROOT:root,AI_LOCAL_HUB_AUTO_BG_SECS:"off",PATH:process.platform==="darwin"?"/usr/bin:/bin:/usr/sbin:/sbin":process.env.PATH},
   stdio:["pipe","pipe","pipe"]
 });
 let buf="",stderr="";
@@ -45,40 +45,39 @@ try{
   const visible=await call("bash",{command:"printf 'VISIBLE_STDOUT'; printf 'VISIBLE_STDERR' >&2"});
   assert.notEqual(visible.isError,true);
   assert.match(asText(visible),/VISIBLE_STDOUT/);
-  assert.match(visible.structuredContent.output,/VISIBLE_STDOUT/);
-  assert.match(visible.structuredContent.output,/VISIBLE_STDERR/);
-  assert.equal(visible.structuredContent.exit_code,0);
-  assert.equal(visible.structuredContent.truncated,false);
-  assert.equal(visible.structuredContent.timed_out,false);
+  assert.match(asText(visible),/VISIBLE_STDERR/);
+  assert.match(asText(visible),/Wall time: \d+\.\d\d seconds/);
   const failed=await call("bash",{command:"printf 'failed command'; exit 17"});
   assert.equal(failed.isError,true);
-  assert.equal(failed.structuredContent.exit_code,17);
-  assert.match(failed.structuredContent.output,/failed command/);
+  assert.match(asText(failed),/failed command/);
+  assert.match(asText(failed),/Command exited with code 17/);
   if(process.platform!=="win32"){
     const tooMuch=await call("bash",{command:"yes x | head -c 200000"});
     assert.notEqual(tooMuch.isError,true);
-    assert.equal(tooMuch.structuredContent.truncated,true);
-    assert.ok(tooMuch.structuredContent.output.length<51000);
-    const timed=await call("bash",{command:"sleep 4",timeout:0.15});
+    assert.match(asText(tooMuch),/ln elided…\]/);
+    assert.match(asText(tooMuch),/Read artifact:\/\/1 for full output\]$/);
+    assert.ok(asText(tooMuch).length<52000);
+    const timed=await call("bash",{command:"sleep 4",timeout:1});
     assert.equal(timed.isError,true);
-    assert.equal(timed.structuredContent.timed_out,true);
-    assert.equal(timed.structuredContent.exit_code,null);
+    assert.match(asText(timed),/^\[Command timed out after 1 seconds\]/);
   }
   const text=join(root,"small.txt");
   await writeFile(text,"first\nsecond\n");
-  assert.match(asText(await call("read",{path:"small.txt",offset:2,limit:1})),/second/);
-  assert.equal((await call("read",{path:"small.txt",offset:0})).isError,true);
-  const edit=await call("edit",{path:"small.txt",edits:[{oldText:"second",newText:"changed"}]});
+  const smallRead=asText(await call("read",{path:"small.txt:2-2"}));
+  assert.match(smallRead,/2:second/);
+  assert.equal((await call("read",{path:"small.txt:0"})).isError,true);
+  const smallTag=smallRead.match(/#([0-9A-F]{4})\]/)[1];
+  const edit=await call("edit",{input:`[small.txt#${smallTag}]\nPUT 2.=2:\n+changed\n`});
   assert.notEqual(edit.isError,true);
   assert.equal(await readFile(text,"utf8"),"first\nchanged\n");
-  assert.equal((await call("edit",{path:"small.txt",edits:[{oldText:"missing",newText:"no"}]})).isError,true);
+  assert.equal((await call("edit",{input:"[absent.txt#0000]\nPUT 1.=1:\n+no\n"})).isError,true);
   assert.match(asText(await call("grep",{pattern:"changed",path:root})),/small\.txt/);
-  assert.match(asText(await call("find",{pattern:"*.txt"})),/small\.txt/);
+  assert.match(asText(await call("glob",{path:"*.txt"})),/small\.txt/);
   assert.match(asText(await call("ls",{})),/small\.txt/);
   const large=join(root,"huge.txt");
   const fh=await open(large,"w");await fh.truncate(33*1024*1024);await fh.close();
   assert.equal((await call("read",{path:"huge.txt"})).isError,true);
-  assert.equal((await call("edit",{path:"huge.txt",edits:[{oldText:"any",newText:"x"}]})).isError,true);
+  assert.equal((await call("edit",{input:"[huge.txt#0000]\nPUT 1.=1:\n+x\n"})).isError,true);
   // Full-access mode intentionally accepts absolute paths outside the chosen workspace.
   const outside=await mkdtemp(join(tmpdir(),"ai-local-hub-outside-"));
   try{
@@ -88,7 +87,8 @@ try{
   if(process.platform!=="win32"){
     // A symlink should not be silently replaced with an ordinary file by an edit.
     await symlink("small.txt",join(root,"alias.txt"));
-    const alias=await call("edit",{path:"alias.txt",edits:[{oldText:"changed",newText:"linked"}]});
+    const aliasTag=asText(await call("read",{path:"alias.txt"})).match(/#([0-9A-F]{4})\]/)[1];
+    const alias=await call("edit",{input:`[alias.txt#${aliasTag}]\nPUT 2.=2:\n+linked\n`});
     assert.notEqual(alias.isError,true);
     assert.match(await readFile(text,"utf8"),/linked/);
   }

@@ -6,6 +6,8 @@ rust-version = "1.85"
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
+pi-edit = { path = "../vendor/omp/pi-edit" }
 async-stream = "0.3"
 dirs = "6"
 percent-encoding = "2"
@@ -16,12 +18,14 @@ url = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 axum = { version = "0.8", features = ["http1", "json"] }
 base64 = "0.22"
+os_pipe = "1"
 futures = "0.3"
 globset = "0.4"
 ignore = "0.4"
 mime_guess = "2"
 libc = "0.2"
 regex = "1"
+fancy-regex = "0.14"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 rmcp = { version = "=3.5.1", features = ["server", "macros", "transport-streamable-http-server"] }
 schemars = "1"
