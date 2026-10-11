@@ -13,7 +13,7 @@ if(process.platform!=="darwin"){
   process.exit(0);
 }
 const bundle=join(release,"bundle");
-const app=join(bundle,"macos","AI Local Hub.app","Contents","MacOS");
+const app=join(bundle,"macos","AI_Local_Hub.app","Contents","MacOS");
 for(const name of ["ai-local-hub-desktop","ai-local-hub-manager","ai-local-hub-runtime"]){
   const path=join(app,name);
   if(!existsSync(path)||statSync(path).size<50_000)throw new Error("Missing or invalid native binary: "+path);

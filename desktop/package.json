@@ -4,10 +4,10 @@
   "private": true,
   "description": "Tauri desktop shell for AI Local Hub",
   "scripts": {
-    "tauri": "tauri",
+    "tauri": "node ../scripts/tauri-build.mjs",
     "stage": "node ../scripts/stage-rust-desktop.mjs",
-    "dev": "npm run stage && tauri dev",
-    "build": "npm run stage && tauri build && node ../scripts/verify-desktop-build.mjs"
+    "dev": "npm run stage && node ../scripts/tauri-build.mjs dev",
+    "build": "npm run stage && node ../scripts/tauri-build.mjs build && node ../scripts/verify-desktop-build.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.2"

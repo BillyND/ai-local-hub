@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AI Local Hub",
+  "productName": "AI_Local_Hub",
   "version": "../../package.json",
   "identifier": "com.ailocalhub.desktop",
   "build": {
