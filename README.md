@@ -44,6 +44,28 @@ npm run dev -- --port 4747 --no-open    # terminal 1: manager (tsx), prints the 
 npm run dev:web                          # terminal 2: Vite on http://127.0.0.1:5173
 ```
 
+## Desktop app (macOS, Windows, Linux)
+
+The desktop app is a thin [Tauri 2](https://tauri.app) shell around the same manager and web UI: one window that loads the UI served by the embedded manager, so there is no second UI to maintain. It bundles its own [Bun](https://bun.sh) runtime (pinned, checksum-verified), so users need nothing installed.
+
+- **Start:** opening the app starts the manager and shows the UI. If a manager is already running (for example `npm start`), the app attaches to it instead of starting another and leaves it running on quit.
+- **Close vs quit:** on macOS and Windows, closing the window keeps your instances running in the background (menu-bar or tray icon: *Show*, *Quit and stop all instances*; reopen from the Dock on macOS). On Linux there is no dependable tray, so closing the window quits. The UI's *Quit* button and the tray's Quit always stop every instance.
+- **No orphans:** the shell closes the manager's stdin to stop it, and the manager (and its workers) also exit when that pipe closes, so a crash or force-quit of the app cannot leave tunnels running.
+- **One window:** launching the app again focuses the running one.
+- **Footprint** (measured on macOS arm64, release build, window open, no instances running): about 106 MB of physical memory for the whole app (Rust shell 26 MB, Bun manager 14 MB, the system WebKit processes ~66 MB) and ~0% CPU. The `.app` is 74 MB (the `.dmg` 32 MB), of which the Rust shell is 3 MB and the embedded Bun runtime 67 MB. Each running instance adds a worker of ~64 MB RSS on Bun (about 93 MB on Node) plus its tunnel-client process. The window uses the system webview (WKWebView, WebView2, WebKitGTK), not a bundled browser.
+
+Build it locally (needs [Rust](https://www.rust-lang.org/tools/install) and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS):
+
+```bash
+npm run desktop:setup    # once: installs the Tauri CLI
+npm run desktop:build    # builds the server + web UI, stages Bun, then bundles the installers
+npm run desktop:dev      # same, but runs the app in development mode
+```
+
+Installers are written to `desktop/src-tauri/target/release/bundle/` (`.dmg`/`.app`, `.msi`/`.exe`, `.deb`/`.rpm`/`.AppImage`). `scripts/stage-desktop.mjs` downloads the Bun release for the target and verifies its SHA256 against the published checksums. `.github/workflows/desktop.yml` builds macOS (arm64, x64), Windows x64 and Linux (x64, arm64) in CI; pushing a tag like `v0.1.0` attaches the installers to a draft release.
+
+**Unsigned builds.** Builds are unsigned until you add signing credentials (see the comments in the workflow), so the OS warns on first launch: on macOS right-click the app and choose *Open* (or allow it in *System Settings → Privacy & Security*); on Windows choose *More info → Run anyway* in SmartScreen. Signing and notarizing need an Apple Developer ID and a Windows code-signing certificate; `desktop/src-tauri/entitlements.plist` already grants the JIT entitlements the embedded Bun runtime needs under the macOS hardened runtime.
+
 ## Environment
 
 | Variable | Purpose |

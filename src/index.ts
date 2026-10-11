@@ -20,6 +20,7 @@ own Tunnel ID, API key and workspace and runs as its own process. Settings are s
 privately in ~/.config/workspace-tools-mcp/config.json (permissions 600).
 --port <n>        Web UI port (default ${DEFAULT_PORT}; a busy default falls back to a free port).
 --no-open         Do not open the browser; use the link printed in the terminal.
+--desktop         For the desktop app: print a JSON ready line, quit when stdin closes.
 --headless        No web UI: start every instance (or those named by --instance) and log to stderr.
                   Use this for services and CI.
 --instance <name> Limit --headless to this instance; repeatable.
@@ -38,6 +39,7 @@ async function main(): Promise<number> {
       reset: { type: "boolean" },
       port: { type: "string" },
       "no-open": { type: "boolean" },
+      desktop: { type: "boolean" },
     },
   });
   const localOnly = values["local-only"] ?? false;
@@ -71,7 +73,7 @@ async function main(): Promise<number> {
     return runHeadless(manager, selected);
   }
   const explicitPort = values.port !== undefined;
-  const port = explicitPort ? Number(values.port) : DEFAULT_PORT;
+  const port = explicitPort ? Number(values.port) : values.desktop ? 0 : DEFAULT_PORT;
   if (!Number.isInteger(port) || port < 0 || port > 65_535)
     throw new Error("--port must be 0-65535.");
   return runManagerApp({
@@ -80,7 +82,8 @@ async function main(): Promise<number> {
     localOnly,
     port,
     explicitPort,
-    open: !values["no-open"],
+    open: !values["no-open"] && !values.desktop,
+    desktop: values.desktop ?? false,
   });
 }
 

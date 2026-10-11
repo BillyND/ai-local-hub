@@ -16,7 +16,10 @@
     "dev:web": "npm --prefix web run dev",
     "test": "tsx --test tests/*.test.ts",
     "smoke": "tsx tests/smoke.ts",
-    "benchmark": "npm run build:server && node scripts/benchmark.mjs"
+    "benchmark": "npm run build:server && node scripts/benchmark.mjs",
+    "desktop:setup": "npm --prefix desktop install --no-audit --no-fund",
+    "desktop:dev": "npm run build && npm --prefix desktop run dev",
+    "desktop:build": "npm run build && npm --prefix desktop run build"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.1.0",

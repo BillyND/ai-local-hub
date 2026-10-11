@@ -45,7 +45,9 @@ const textOf = (result: unknown): string =>
 
 test("the bundled worker serves every tool", { skip: !existsSync(worker) && "dist/worker.mjs not built" }, async () => {
   const root = await mkdtemp(join(tmpdir(), "workspace-tools-bundle-"));
-  const manager = new InstanceManager({ cacheDir: root, localOnly: true, entryScript: worker });
+  // WTM_TEST_RUNTIME=/path/to/bun runs the same checks with another runtime.
+  const runtime = process.env.WTM_TEST_RUNTIME || undefined;
+  const manager = new InstanceManager({ cacheDir: root, localOnly: true, entryScript: worker, runtime });
   const client = new Client({ name: "bundle-smoke", version: "1.0.0" });
   try {
     const id = "bundle";

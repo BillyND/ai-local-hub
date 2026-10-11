@@ -10,3 +10,11 @@ coverage/
 .DS_Store
 plans
 .history
+
+# desktop app (Tauri)
+desktop/node_modules/
+desktop/.cache/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/binaries/
+desktop/src-tauri/resources/

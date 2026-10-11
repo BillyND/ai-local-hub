@@ -16,6 +16,8 @@ export interface ManagerAppOptions {
   port: number;
   explicitPort: boolean;
   open: boolean;
+  /** Embedded-in-an-app mode: JSON `ready` line on stdout, quit when stdin closes. */
+  desktop?: boolean;
   staticDir?: string;
 }
 
@@ -55,23 +57,35 @@ export async function runManagerApp(
   if (!lock.acquired) {
     await server.close();
     const existing = `${lock.existing.url}?token=${lock.existing.token}`;
-    console.log(
-      `Workspace Tools MCP is already running (pid ${lock.existing.pid}).\nOpen: ${existing}`,
-    );
+    if (options.desktop) {
+      // Attach mode: the host app opens the manager that is already running and does not own it.
+      process.stdout.write(`${JSON.stringify({ type: "ready", url: existing, owner: false })}\n`);
+      return 0;
+    }
+    console.log(`Workspace Tools MCP is already running (pid ${lock.existing.pid}).\nOpen: ${existing}`);
     if (options.open) openBrowser(existing);
     return 0;
   }
   const link = `${server.url}?token=${token}`;
-  console.log(
-    `Workspace Tools MCP is running.\nOpen: ${link}\nPress Ctrl+C to stop all instances and quit.`,
-  );
-  if (options.open) openBrowser(link);
+  if (options.desktop) {
+    process.stdout.write(`${JSON.stringify({ type: "ready", url: link, owner: true })}\n`);
+    // The host app closes our stdin to ask for a graceful stop, and when it dies the pipe closes too,
+    // so an embedded manager (and its workers) never outlives the app.
+    process.stdin.on("end", requestStop);
+    process.stdin.on("close", requestStop);
+    process.stdin.resume();
+  } else {
+    console.log(`Workspace Tools MCP is running.\nOpen: ${link}\nPress Ctrl+C to stop all instances and quit.`);
+    if (options.open) openBrowser(link);
+  }
   process.once("SIGINT", requestStop);
   process.once("SIGTERM", requestStop);
   await stopRequested;
-  console.log("Stopping instances…");
+  if (!options.desktop) console.log("Stopping instances…");
   await manager.stopAll();
   await server.close();
   await lock.release();
+  // Stop reading stdin so the open pipe does not keep the process alive after a UI-initiated Quit.
+  if (options.desktop) process.stdin.pause();
   return 0;
 }

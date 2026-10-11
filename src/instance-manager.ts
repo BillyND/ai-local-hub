@@ -26,6 +26,8 @@ export interface InstanceManagerOptions {
   localOnly: boolean;
   /** Worker entry script; defaults to the one built next to the manager. */
   entryScript?: string;
+  /** JavaScript runtime that executes workers; defaults to the runtime running the manager. */
+  runtime?: string;
   /** Resolves the tunnel client path once; the result is shared by all workers. */
   tunnelBinary?: (log: (message: string) => void) => Promise<string>;
 }
@@ -178,7 +180,7 @@ export class InstanceManager extends EventEmitter {
       script,
       ...(this.options.localOnly ? ["--local-only"] : []),
     ];
-    const child = spawn(process.execPath, args, {
+    const child = spawn(this.options.runtime ?? process.execPath, args, {
       env: {
         ...process.env,
         WORKSPACE_ROOT: instance.workspaceRoot,
