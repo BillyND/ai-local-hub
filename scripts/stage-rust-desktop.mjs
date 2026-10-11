@@ -1,10 +1,11 @@
 // Stage native Rust sidecars and the prebuilt React UI for Tauri.
 // No Bun, Node.js or JavaScript server code ships in the desktop installer.
 import {execFileSync} from "node:child_process";
+import {fileURLToPath} from "node:url";
 import {chmodSync,cpSync,existsSync,mkdirSync,rmSync} from "node:fs";
 import {join} from "node:path";
 import {buildNative,cargoPath} from "./native-build.mjs";
-const root=new URL("..",import.meta.url).pathname;
+const root=fileURLToPath(new URL("..",import.meta.url));
 const index=process.argv.indexOf("--target");
 let target=process.argv[index+1];
 if(index<0){
