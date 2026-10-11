@@ -48,7 +48,7 @@ npm run dev:web                          # terminal 2: Vite on http://127.0.0.1:
 
 The desktop app is a thin [Tauri 2](https://tauri.app) shell around the same manager and web UI: one window that loads the UI served by the embedded manager, so there is no second UI to maintain. It bundles its own [Bun](https://bun.sh) runtime (pinned, checksum-verified), so users need nothing installed.
 
-- **Start:** opening the app starts the manager and shows the UI. If a manager is already running (for example `npm start`), the app attaches to it instead of starting another and leaves it running on quit.
+- **Start:** opening the app starts the manager and shows the UI. If a manager is already running (for example `npm start`), the app attaches to it instead of starting another and leaves it running when the window closes; if that manager is stopped (its Quit button or Ctrl+C), the app closes too. If the manager fails to start or hangs for 30 s, the window shows the reason instead of a blank page.
 - **Close vs quit:** on macOS and Windows, closing the window keeps your instances running in the background (menu-bar or tray icon: *Show*, *Quit and stop all instances*; reopen from the Dock on macOS). On Linux there is no dependable tray, so closing the window quits. The UI's *Quit* button and the tray's Quit always stop every instance.
 - **No orphans:** the shell closes the manager's stdin to stop it, and the manager (and its workers) also exit when that pipe closes, so a crash or force-quit of the app cannot leave tunnels running.
 - **One window:** launching the app again focuses the running one.

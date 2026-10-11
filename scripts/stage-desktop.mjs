@@ -2,7 +2,7 @@
 //   desktop/src-tauri/binaries/wtm-bun-<triple>[.exe]  the Bun runtime (sidecar)
 //   desktop/src-tauri/resources/app/                   package.json + dist/ (manager, worker, UI)
 //
-// Usage: node scripts/stage-desktop.mjs [--target <rust-triple>]   (default: host, or
+// Usage: node scripts/stage-desktop.mjs [--target <rust-triple>] [--skip-stale-check]   (default: host, or
 // TAURI_ENV_TARGET_TRIPLE). Run `npm run build` first.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -92,10 +92,13 @@ function stageApp() {
   const dist = join(root, "dist");
   for (const file of [...APP_FILES, "web/index.html"])
     if (!existsSync(join(dist, file))) throw new Error(`dist/${file} is missing. Run npm run build first.`);
-  // Staging a stale build would silently ship old code; refuse instead.
+  // Staging a stale build would silently ship old code; refuse instead (modification times are
+  // compared, so pass --skip-stale-check if a checkout or cache restore skews them).
   const sources = ["src", "web/src", "web/public", "web/index.html", "scripts/bundle.mjs", "package.json"].map((p) => join(root, p));
   const built = Math.min(statSync(join(dist, "app.mjs")).mtimeMs, statSync(join(dist, "web", "index.html")).mtimeMs);
-  const changed = sources.find((source) => existsSync(source) && newestMtime(source) > built);
+  const changed = process.argv.includes("--skip-stale-check")
+    ? undefined
+    : sources.find((source) => existsSync(source) && newestMtime(source) > built);
   if (changed) throw new Error(`dist/ is older than ${changed.slice(root.length + 1)}. Run npm run build first.`);
   const target = join(desktop, "src-tauri", "resources", "app");
   rmSync(target, { recursive: true, force: true });
