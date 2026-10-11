@@ -21,7 +21,8 @@ function ScrollArea({
       <ScrollAreaPrimitive.Viewport
         ref={viewportRef}
         onScroll={onViewportScroll}
-        className="size-full rounded-[inherit] focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+        // Radix wraps children in a display:table div that widens to the longest unbreakable token; force block so text wraps.
+        className="size-full rounded-[inherit] focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none [&>div]:!block"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
