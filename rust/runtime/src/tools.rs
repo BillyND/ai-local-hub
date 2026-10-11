@@ -67,6 +67,12 @@ impl CodingTools {
         static PROCESS_LIMIT: OnceLock<Arc<Semaphore>> = OnceLock::new();
         Self { root, process_limit: Arc::clone(PROCESS_LIMIT.get_or_init(|| Arc::new(Semaphore::new(16)))), store: EditStore::new(), artifacts: Arc::new(artifacts::Artifacts::new()), jobs: Arc::new(bash_jobs::Jobs::default()), pending: Arc::new(Default::default()), lsp: Arc::new(Default::default()) }
     }
+    /// Names of every MCP tool this worker serves, sorted (logged at startup).
+    pub fn tool_names()->Vec<String> {
+        let mut names=Self::tool_router().list_all().into_iter().map(|t|t.name.to_string()).collect::<Vec<_>>();
+        names.sort();
+        names
+    }
     fn path(&self,p:&str)->PathBuf {let p=Path::new(p); if p.is_absolute(){p.to_path_buf()} else {self.root.join(p)}}
     /// Appends settled background-job results to this tool's result (MCP has no server-initiated turns).
     fn deliver(&self,mut r:CallToolResult)->CallToolResult {
@@ -278,6 +284,11 @@ mod tests {
         let cut=cut(s);
         assert!(cut.ends_with("[Output truncated at 50 KB; use offset/limit or narrower search.]"));
         assert!(cut.starts_with(&"a".repeat(49_999)));
+    }
+    #[test] fn startup_log_lists_every_served_tool(){
+        let names=CodingTools::tool_names();
+        assert_eq!(names.len(),14);
+        for n in ["read","write","edit","glob","grep","bash","wait","kill_job","ast_grep","ast_edit","resolve","reject","lsp","ls"]{assert!(names.iter().any(|x|x==n),"{n}");}
     }
     #[test] fn process_limit_is_shared_by_sessions(){
         let a=CodingTools::new(PathBuf::from("/tmp"));

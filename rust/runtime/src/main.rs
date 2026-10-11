@@ -56,7 +56,8 @@ async fn run() -> Result<()> {
     let mcp_url = format!("http://127.0.0.1:{port}/mcp");
     emit(serde_json::json!({"type":"mcp","url":mcp_url}));
     emit(serde_json::json!({"type":"log","message":format!("MCP ready: {mcp_url}")}));
-    emit(serde_json::json!({"type":"log","message":"Tools: read, bash, edit, write, grep, find, ls"}));
+    let tool_names=CodingTools::tool_names();
+    emit(serde_json::json!({"type":"log","message":format!("Tools ({}): {}",tool_names.len(),tool_names.join(", "))}));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let mut shutdown_http = shutdown_rx.clone();
     let server = tokio::spawn(async move {
