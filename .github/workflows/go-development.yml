@@ -1,0 +1,75 @@
+name: Go development verification
+
+# Deliberately no desktop packaging, signing, releases, or deployments.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'go/**'
+      - 'scripts/test-go.mjs'
+      - 'scripts/start-go-dev.mjs'
+      - 'web/**'
+      - '.github/workflows/go-development.yml'
+      - 'package*.json'
+  push:
+    branches: [main]
+    paths:
+      - 'go/**'
+      - 'scripts/test-go.mjs'
+      - 'scripts/start-go-dev.mjs'
+      - 'web/**'
+      - '.github/workflows/go-development.yml'
+      - 'package*.json'
+
+permissions:
+  contents: read
+
+jobs:
+  native-development-tests:
+    name: Native Go tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Go vet, race/unit tests, TS typecheck, web build, MCP smoke and tunnel fixture
+        run: npm run test:go
+
+  cross-compile-go-cli:
+    name: Compile Go CLI (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: darwin, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: windows, goarch: amd64}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Compile headless manager and worker only (NOT Wails desktop)
+        working-directory: go
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          go build ./cmd/ai-local-hub-manager
+          go build ./cmd/ai-local-hub-runtime

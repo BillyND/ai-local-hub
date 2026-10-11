@@ -4,6 +4,18 @@
 
 The **manager, MCP protocol server, coding-tool execution, instance supervision, config/API and OpenAI tunnel orchestration are written in Rust**. The desktop container is Tauri 2 / Rust. The visual UI is React/Vite and is served as static files; it does not run a Node/Bun application server. The TypeScript implementation remains in `src/` for compatibility comparisons and regression testing, but **the native Rust path is the default**.
 
+## Go migration (development only)
+
+A separate Go manager + official MCP Go SDK worker is being migrated under [`go/`](go/) using the existing React UI contract. **This is not a production replacement and there is no Wails desktop build.** Current Rust/Tauri defaults remain unchanged.
+
+```bash
+npm run test:go       # Go vet/race, Vite/TypeScript, MCP + manager + fake tunnel tests
+npm run dev:go        # isolated config, local-only Go manager
+npm run benchmark:go  # measured Rust-vs-Go MCP benchmark, when Rust release exists
+```
+
+For the verified feature matrix, limitations, benchmark, platform gaps, and rollback instructions, see [Go migration checkpoint](docs/go-migration/README.md). **Do not use an existing production config or tunnel key with the experimental Go manager.**
+
 ## Build and run (from the repository)
 
 Requirements: Rust toolchain (stable), Node.js/npm **only to compile the React UI and invoke build scripts**, and a ChatGPT workspace with OpenAI Secure MCP Tunnel access for remote connectivity.
