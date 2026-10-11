@@ -1,6 +1,6 @@
 {
   "name": "ai-local-hub",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "private": true,
   "description": "Native Rust MCP hub for AI clients, with a React UI and Tauri desktop shell",
   "type": "module",
