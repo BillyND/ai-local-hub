@@ -1,0 +1,22 @@
+[package]
+name = "pi-vfs"
+version = "18.9.1"
+edition = "2024"
+license = "MIT"
+authors = ["Stencil Labs, Inc."]
+description = "Vendored from oh-my-pi a4d6f0a (MIT): virtual filesystem"
+repository = "https://github.com/can1357/oh-my-pi"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+parking_lot = "0.12.5"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+xattr = "1.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

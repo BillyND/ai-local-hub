@@ -1,0 +1,27 @@
+[package]
+name = "pi-edit"
+version = "18.9.1"
+edition = "2024"
+license = "MIT"
+authors = ["Stencil Labs, Inc."]
+description = "Vendored from oh-my-pi a4d6f0a (MIT): hashline edit engine; xutf replaced by unicode-normalization"
+repository = "https://github.com/can1357/oh-my-pi"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+parking_lot = "0.12.5"
+pi-ast = { path = "../pi-ast" }
+pi-diff = { path = "../pi-diff" }
+pi-walker = { path = "../pi-walker" }
+regex = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+thiserror = "2"
+unicode-normalization = "0.1"
+xxhash-rust = { version = "0.8", features = ["xxh64", "xxh32"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+tree-sitter-lua = "0.5"
