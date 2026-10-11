@@ -57,7 +57,7 @@ WORKSPACE_TOOLS_CONFIG_FILE overrides the configuration file location.`);
     apiKey = config.apiKey;
     // The tunnel receives its key explicitly; shell tools must not inherit it.
     delete process.env.OPENAI_API_KEY;
-    log(`${config.loadedFromDisk ? "Reusing" : "Saved"} configuration: ${config.configPath}`);
+    log(`Configuration ready. Settings path: ${config.configPath}`);
     log("Full filesystem and shell permissions enabled; the workspace is not a sandbox.");
     log(`Workspace: ${config.workspaceRoot}`);
     log(`Cache: ${config.cacheDir}`);

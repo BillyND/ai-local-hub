@@ -38,7 +38,7 @@ npm start -- --local-only
 
 ## Environment overrides
 
-Environment values take precedence over saved settings. This is useful for CI or one-off runs.
+Environment values take precedence over saved settings and stay runtime-only; they do not overwrite or persist the saved API key. This is useful for CI or one-off runs. Use an interactive run, without these overrides, to save new settings.
 
 | Variable | Purpose |
 | --- | --- |
