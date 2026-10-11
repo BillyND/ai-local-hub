@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { createInterface } from "node:readline";
 import type { InstanceConfig } from "./config.js";
 import { signalGroup } from "./process-supervisor.js";
+import { resolveWorkerScript } from "./worker-script.js";
 import { parseEvent, type WorkerEvent } from "./worker-protocol.js";
 
 export type InstanceState =
@@ -23,7 +24,7 @@ export interface InstanceStatus {
 export interface InstanceManagerOptions {
   cacheDir: string;
   localOnly: boolean;
-  /** Script that handles `--worker`; defaults to the running entry script. */
+  /** Worker entry script; defaults to the one built next to the manager. */
   entryScript?: string;
   /** Resolves the tunnel client path once; the result is shared by all workers. */
   tunnelBinary?: (log: (message: string) => void) => Promise<string>;
@@ -166,13 +167,15 @@ export class InstanceManager extends EventEmitter {
     entry: Entry,
     binary?: string,
   ): void {
-    const script = this.options.entryScript ?? process.argv[1];
-    if (!script)
-      return this.fail(instance.id, "Cannot locate the worker entry script.");
+    let script: string;
+    try {
+      script = this.options.entryScript ?? resolveWorkerScript();
+    } catch (error: unknown) {
+      return this.fail(instance.id, error instanceof Error ? error.message : String(error));
+    }
     const args = [
       ...process.execArgv,
       script,
-      "--worker",
       ...(this.options.localOnly ? ["--local-only"] : []),
     ];
     const child = spawn(process.execPath, args, {

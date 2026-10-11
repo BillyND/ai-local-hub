@@ -8,7 +8,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { InstanceConfig } from "../src/config.js";
 import { InstanceManager, type InstanceState } from "../src/instance-manager.js";
 
-const entryScript = new URL("../src/index.ts", import.meta.url).pathname;
+const entryScript = new URL("../src/worker-main.ts", import.meta.url).pathname;
 
 async function withWorkspace(run: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "workspace-tools-manager-"));

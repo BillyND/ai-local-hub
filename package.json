@@ -9,9 +9,9 @@
   },
   "scripts": {
     "postinstall": "npm --prefix web install --no-audit --no-fund",
-    "build": "tsc -p tsconfig.json && npm --prefix web run build",
-    "build:server": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json && node scripts/bundle.mjs && npm --prefix web run build",
+    "build:server": "tsc -p tsconfig.json && node scripts/bundle.mjs",
+    "start": "node dist/app.mjs",
     "dev": "tsx src/index.ts",
     "dev:web": "npm --prefix web run dev",
     "test": "tsx --test tests/*.test.ts",
@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "22.19.19",
+    "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "5.9.3"
   }

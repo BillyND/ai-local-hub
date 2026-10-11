@@ -12,7 +12,7 @@ A local MCP server exposing Pi's built-in coding tools directly to ChatGPT Web a
 
 ```bash
 npm install     # also installs the web UI dependencies
-npm run build   # compiles the server and builds the web UI into dist/web
+npm run build   # compiles + bundles the server and builds the web UI into dist/web
 npm start
 ```
 
@@ -33,7 +33,7 @@ npm start -- --reset           # delete saved settings and exit
 
 **The web UI controls instances that give the connected ChatGPT account full shell and filesystem access, so it is locked down:** it binds to `127.0.0.1` only, requires a random per-launch token (the first visit exchanges the link's token for an `HttpOnly`, `SameSite=Strict` cookie), rejects foreign `Host` headers (DNS rebinding) and cross-origin or non-JSON changes, and sends a strict Content-Security-Policy. Anyone who can read the link printed in your terminal can control the manager, so do not share it. Headless mode (`--headless`) has no UI and no listener.
 
-Each idle worker uses roughly 150 MB of RSS on Node (measured on macOS arm64); plan memory per running instance.
+**Memory and CPU.** `npm run build` bundles the manager (`dist/app.mjs`, no Pi SDK) and each worker (`dist/worker.mjs`, Pi's tool factories only, plus `dist/image-resize-worker.js` and `photon_rs_bg.wasm` for image reads). Measured on macOS arm64 with Node 22 and local-only instances: the manager idles at about 60 MB and each worker at about 90 MB RSS, with ~0% idle CPU (3 instances: ~330 MB total; the unbundled build needed ~500 MB). Real tunnels add the official tunnel-client process per instance, which is not included in these numbers. Logs are kept in memory only, 1000 lines per instance, cleared when the instance restarts.
 
 ### Developing the UI
 

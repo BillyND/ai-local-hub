@@ -9,7 +9,6 @@ import { runHeadless } from "./headless.js";
 import { InstanceManager } from "./instance-manager.js";
 import { runManagerApp } from "./manager-app.js";
 import { ensureTunnelClient } from "./tunnel-download.js";
-import { runWorker } from "./worker.js";
 
 const DEFAULT_PORT = 4747;
 
@@ -37,7 +36,6 @@ async function main(): Promise<number> {
       headless: { type: "boolean" },
       instance: { type: "string", multiple: true },
       reset: { type: "boolean" },
-      worker: { type: "boolean" },
       port: { type: "string" },
       "no-open": { type: "boolean" },
     },
@@ -47,7 +45,6 @@ async function main(): Promise<number> {
     console.log(HELP);
     return 0;
   }
-  if (values.worker) return runWorker(localOnly);
   const configPath = resolveConfigPath();
   if (values.reset) {
     await removeSavedConfig(configPath);

@@ -9,7 +9,7 @@ import { InstanceManager } from "../src/instance-manager.js";
 import { acquireManagerLock } from "../src/manager-lock.js";
 import { startWebServer, type WebServer } from "../src/manager-api/server.js";
 
-const entryScript = new URL("../src/index.ts", import.meta.url).pathname;
+const entryScript = new URL("../src/worker-main.ts", import.meta.url).pathname;
 const SECRET = "sk-very-secret-key";
 
 interface Fixture {
