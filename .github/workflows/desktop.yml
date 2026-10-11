@@ -25,6 +25,7 @@ jobs:
         with:
           workspaces: './rust/runtime -> target'
       - run: npm ci
+      - run: npm --prefix web ci
       - run: npm run build
       - run: npm test
 
@@ -83,11 +84,12 @@ jobs:
       - name: Build the manager, worker and web UI
         run: |
           npm ci
+          npm --prefix web ci
+          npm --prefix desktop ci
           npm run build
 
       - name: Stage native Rust manager, worker and React assets
         run: |
-          npm --prefix desktop ci
           node scripts/stage-rust-desktop.mjs --target ${{ matrix.target }}
 
       - name: Build native installers
