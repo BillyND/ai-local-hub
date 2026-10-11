@@ -18,6 +18,11 @@ function baseName(p: string) {
   return p.split(/[\\/]/).filter(Boolean).pop() ?? p
 }
 
+function childFolderPath(parent: string, child: string) {
+  const separator = parent.includes('\\') ? '\\' : '/'
+  return `${parent.endsWith(separator) ? parent : parent + separator}${child}`
+}
+
 export function FolderBrowserDialog({ open, onOpenChange, initialPath, onSelect }: Props) {
   const [target, setTarget] = useState<string | undefined>(undefined)
   const [listing, setListing] = useState<FsListing | null>(null)
@@ -65,7 +70,7 @@ export function FolderBrowserDialog({ open, onOpenChange, initialPath, onSelect 
             )}
             {listing?.dirs.map((d) => (
               <li key={d}>
-                <Button variant="ghost" size="sm" className="w-full justify-start font-normal" onClick={() => setTarget(d)}>
+                <Button variant="ghost" size="sm" className="w-full justify-start font-normal" onClick={() => setTarget(childFolderPath(listing.path, d))}>
                   <FolderIcon className="text-muted-foreground" /><span className="truncate">{baseName(d)}</span>
                 </Button>
               </li>

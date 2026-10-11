@@ -49,8 +49,8 @@ export function LogPanel({ instanceId, instanceName, subscribeLogs }: Props) {
   }, [instanceId, scrollToBottom])
 
   return (
-    <Card className="h-[28rem] gap-0 overflow-hidden py-0 lg:sticky lg:top-6 lg:h-[calc(100dvh-8rem)]">
-      <CardHeader className="flex-row items-center justify-between gap-2 px-4 py-3">
+    <Card className="h-[min(28rem,60dvh)] min-h-0 min-w-0 gap-0 overflow-hidden py-0 lg:h-full">
+      <CardHeader className="shrink-0 flex-row items-center justify-between gap-2 px-4 py-3">
         <CardTitle className="min-w-0 truncate text-sm">
           Logs{instanceName && <span className="font-normal text-muted-foreground"> · {instanceName}</span>}
         </CardTitle>
@@ -63,7 +63,7 @@ export function LogPanel({ instanceId, instanceName, subscribeLogs }: Props) {
       </CardHeader>
       <Separator />
       <div className="relative min-h-0 flex-1 bg-muted/30">
-        <ScrollArea className="h-full" viewportRef={viewport} onViewportScroll={onScroll}>
+        <ScrollArea className="h-full min-h-0 w-full" viewportRef={viewport} onViewportScroll={onScroll}>
           {entries.length === 0 ? (
             <p className="p-4 font-mono text-xs text-muted-foreground">{instanceId ? 'No output yet.' : 'Select an instance to see its output.'}</p>
           ) : (

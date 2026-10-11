@@ -39,7 +39,7 @@ export function InstanceCard({ instance, localOnly, selected, onSelect, onStart,
     >
       <CardHeader className="flex-row items-center justify-between gap-3">
         <CardTitle className="min-w-0 truncate text-base">
-          <button type="button" onClick={onSelect} className="max-w-full truncate rounded-sm text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50" aria-pressed={selected}>
+          <button type="button" onClick={onSelect} className="max-w-full cursor-pointer truncate rounded-sm text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50" aria-pressed={selected}>
             {instance.name}
           </button>
         </CardTitle>

@@ -85,7 +85,7 @@ export default function App() {
   const selected = state.instances.find((i) => i.id === selectedId) ?? null
   return (
     <TooltipProvider>
-      <div className="mx-auto flex min-h-dvh min-w-0 max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6">
+      <div className="mx-auto flex min-h-dvh min-w-0 max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6 lg:h-dvh lg:overflow-hidden">
         <AppHeader
           instances={state.instances}
           localOnly={state.localOnly}
@@ -97,8 +97,8 @@ export default function App() {
           onQuit={() => run(async () => { await api.shutdown(); setStopped(true) })}
         />
         <SecurityNote />
-        <main className="grid grid-cols-[minmax(0,1fr)] items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-          <section aria-label="Instances">
+        <main className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-6 lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] lg:items-stretch">
+          <section aria-label="Instances" className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
             <InstanceList
               instances={state.instances}
               localOnly={state.localOnly}
@@ -111,7 +111,7 @@ export default function App() {
               onDelete={(i) => run(() => api.deleteInstance(i.id), `Deleted "${i.name}"`).then(refresh)}
             />
           </section>
-          <section aria-label="Logs">
+          <section aria-label="Logs" className="min-w-0 min-h-0 lg:overflow-hidden">
             <LogPanel instanceId={selected?.id ?? null} instanceName={selected?.name ?? null} subscribeLogs={subscribeLogs} />
           </section>
         </main>
