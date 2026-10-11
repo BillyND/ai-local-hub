@@ -40,7 +40,7 @@ npm run desktop:build           # build native Rust + static UI + installers
 npm run desktop:dev             # launch the desktop in development mode
 ```
 
-Desktop packaging assets are staged by `scripts/stage-rust-desktop.mjs` and built by `desktop/src-tauri/tauri.conf.json`. macOS builds produce an app/DMG, subject to the machine's signing credentials. Build workflows currently target macOS Apple Silicon and Intel; Windows/Linux source paths exist, but require native platform verification.
+Desktop packaging assets are staged by `scripts/stage-rust-desktop.mjs` and built by `desktop/src-tauri/tauri.conf.json`. macOS builds produce an app/DMG, Windows builds produce MSI/NSIS installers, and Linux builds produce AppImage/DEB packages. `.github/workflows/desktop.yml` verifies all native binaries and creates a GitHub release with all platform installers for each `v*` tag. Builds are unsigned by default; platform signing credentials can be added to the workflow.
 
 The app reuses the existing manager lock when one is already running. On macOS and Windows, closing the window hides it while the manager continues under the tray/menu-bar icon; **Quit** stops workers and tunnels. A desktop-launched manager also observes stdin EOF so it does not outlive the desktop host.
 

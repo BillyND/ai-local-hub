@@ -1,12 +1,15 @@
 name: desktop
 
-# Native Rust MCP manager + worker; macOS Apple Silicon and Intel installers.
-# Manual runs upload artifacts; a v* tag builds and attaches DMGs to a draft GitHub release.
-# Publish the draft after checking both assets.
+# Native Rust MCP manager + worker; native installers for macOS, Windows and Linux.
+# Manual runs upload workflow artifacts. A v* tag creates a published GitHub release
+# after every platform bundle has passed its platform-specific integrity check.
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
+
+permissions:
+  contents: write
 
 jobs:
   verify:
@@ -27,19 +30,42 @@ jobs:
 
   bundle:
     needs: verify
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
+          - name: macos-aarch64
+            platform: macos-latest
             target: aarch64-apple-darwin
-          - platform: macos-latest # cross-compiled native Rust binaries for Intel
+            artifact_glob: desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/**/*.dmg
+          - name: macos-x64
+            platform: macos-13
             target: x86_64-apple-darwin
+            artifact_glob: desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/**/*.dmg
+          - name: windows-x64
+            platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_glob: |
+              desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.msi
+              desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.exe
+          - name: linux-x64
+            platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact_glob: |
+              desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/**/*.AppImage
+              desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/**/*.deb
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwebkit2gtk-4.0-dev \
+            librsvg2-dev \
+            patchelf
 
       - uses: actions/setup-node@v6
         with:
@@ -64,29 +90,38 @@ jobs:
           npm --prefix desktop ci
           node scripts/stage-rust-desktop.mjs --target ${{ matrix.target }}
 
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Unsigned by default. To sign/notarize macOS releases, add:
-          # APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-          # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
-        with:
-          projectPath: desktop
-          args: --target ${{ matrix.target }}
-          # On a tag push this creates a draft release; manual runs only upload workflow artifacts.
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('AI Local Hub {0}', github.ref_name) || '' }}
-          releaseBody: 'macOS installers (Apple Silicon and Intel). These builds are unsigned; see the README for first-run instructions.'
-          releaseDraft: true
-          prerelease: false
+      - name: Build native installers
+        run: node scripts/tauri-build.mjs build --target ${{ matrix.target }}
 
-      - name: Check native DMG integrity
+      - name: Check native bundle integrity
         run: node scripts/verify-desktop-build.mjs --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
-          name: ai-local-hub-${{ matrix.target }}
-          path: |
-            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
-          if-no-files-found: warn
+          name: ai-local-hub-${{ matrix.name }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: bundle
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: ai-local-hub-*
+          merge-multiple: true
+
+      - name: Create GitHub release and upload installers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          assets=()
+          while IFS= read -r -d '' file; do assets+=("$file"); done < <(find release-assets -type f -print0)
+          gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "AI Local Hub ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --latest
