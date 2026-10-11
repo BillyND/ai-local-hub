@@ -46,6 +46,23 @@ npm run dev -- --port 4747 --no-open    # terminal 1: manager (tsx), prints the 
 npm run dev:web                          # terminal 2: Vite on http://127.0.0.1:5173
 ```
 
+## Download macOS releases
+
+Download **AI Local Hub** from **[GitHub Releases](https://github.com/BillyND/ai-local-hub/releases)**.
+For now, releases provide **macOS only**: use the aarch64 DMG for Apple Silicon
+(M1/M2/M3/M4) or the x86_64 DMG for Intel Macs. Windows and Linux builds are not published yet.
+
+**Unsigned builds:** Until Apple Developer signing/notarization is configured, macOS may block
+the app at first launch. After attempting to open it, go to **System Settings → Privacy & Security
+→ Open Anyway** if you trust the downloaded build. The app provides shell/filesystem access to
+connected AI clients, so review the source and release before granting permissions.
+
+**For maintainers:** Run tests, update the version consistently in the root, desktop and Tauri
+package files/lockfiles, commit, then push a vX.Y.Z tag. The GitHub desktop workflow verifies
+and builds macOS DMGs into a **draft GitHub Release**. Check that both architectures passed
+and both DMGs are attached before publishing the draft. Manual workflow runs generate
+downloadable Actions artifacts without publishing a release.
+
 ## Desktop app (macOS, Windows, Linux)
 
 AI Local Hub is a thin [Tauri 2](https://tauri.app) shell around the same manager and web UI: one window that loads the UI served by the embedded manager, so there is no second UI to maintain. It bundles its own [Bun](https://bun.sh) runtime (pinned, checksum-verified), so users need nothing installed.
