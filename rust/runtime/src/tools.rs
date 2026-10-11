@@ -1,10 +1,10 @@
 //! Pi-compatible MCP coding tools implemented in native Rust.
 //! Workspace is a working directory, not a sandbox: absolute paths are intentionally allowed.
+use pi_edit::EditStore;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use rmcp::{handler::server::wrapper::Parameters, model::{CallToolResult, ContentBlock}, schemars::JsonSchema, tool, tool_router};
+use rmcp::{handler::server::{router::tool::ToolRouter, wrapper::Parameters}, model::{CallToolResult, ContentBlock}, schemars::JsonSchema, tool, tool_handler, tool_router, ServerHandler};
 use serde::Deserialize;
 use crate::tool_log::{brief,traced,traced_async};
-use pi_edit::EditStore;
 mod artifacts;
 mod ast_common;
 mod ast_edit_tool;
@@ -33,10 +33,12 @@ mod read_selector;
 mod read_text;
 mod search_paths;
 mod search_walk;
+mod tool_groups;
 mod tree_output;
 mod write_file;
 use serde_json::json;
-use std::{fs, path::{Path,PathBuf}, sync::{Arc,OnceLock}, time::Duration};
+use std::{fs, path::{Path,PathBuf}, sync::{Arc,LazyLock}, time::Duration};
+pub use tool_groups::ToolGroups;
 use tokio::sync::Semaphore;
 
 const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
@@ -46,8 +48,6 @@ const WAIT_CAP_SECS: u64 = 50;
 fn shell_path() -> Option<std::ffi::OsString> {
     let original = std::env::var_os("PATH").unwrap_or_default();
     if !cfg!(target_os="macos") { return Some(original); }
-    // GUI applications on macOS commonly inherit only /usr/bin:/bin:/usr/sbin:/sbin.
-    // Preserve the user's existing order, then append conventional developer locations.
     let mut paths = std::env::split_paths(&original).collect::<Vec<_>>();
     if let Some(home) = dirs::home_dir() {
         paths.push(home.join(".local/bin"));
@@ -61,18 +61,24 @@ fn shell_path() -> Option<std::ffi::OsString> {
 }
 
 #[derive(Clone)]
-pub struct CodingTools {root:PathBuf, process_limit: Arc<Semaphore>, store: EditStore, artifacts: Arc<artifacts::Artifacts>, jobs: Arc<bash_jobs::Jobs>, pending: Arc<ast_edit_tool::PendingList>, lsp: Arc<lsp_pool::Pool>}
+pub struct CodingTools {root:PathBuf, groups:tool_groups::ToolGroups, process_limit: Arc<Semaphore>, store: EditStore, artifacts: Arc<artifacts::Artifacts>, jobs: Arc<bash_jobs::Jobs>, pending: Arc<ast_edit_tool::PendingList>, lsp: Arc<lsp_pool::Pool>}
 impl CodingTools {
-    pub fn new(root:PathBuf)->Self {
-        static PROCESS_LIMIT: OnceLock<Arc<Semaphore>> = OnceLock::new();
-        Self { root, process_limit: Arc::clone(PROCESS_LIMIT.get_or_init(|| Arc::new(Semaphore::new(16)))), store: EditStore::new(), artifacts: Arc::new(artifacts::Artifacts::new()), jobs: Arc::new(bash_jobs::Jobs::default()), pending: Arc::new(Default::default()), lsp: Arc::new(Default::default()) }
+    pub fn new(root:PathBuf)->Self { Self::with_groups(root, tool_groups::ToolGroups::default()) }
+    pub fn from_env(root:PathBuf)->Result<Self,String> { Ok(Self::with_groups(root, tool_groups::ToolGroups::from_env()?)) }
+    pub fn with_groups(root:PathBuf, groups:tool_groups::ToolGroups)->Self {
+        static PROCESS_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(16)));
+        Self { root, groups, process_limit: Arc::clone(&PROCESS_LIMIT), store: EditStore::new(), artifacts: Arc::new(artifacts::Artifacts::new()), jobs: Arc::new(bash_jobs::Jobs::default()), pending: Arc::new(Default::default()), lsp: Arc::new(lsp_pool::Pool::default()) }
     }
-    /// Names of every MCP tool this worker serves, sorted (logged at startup).
-    pub fn tool_names()->Vec<String> {
-        let mut names=Self::tool_router().list_all().into_iter().map(|t|t.name.to_string()).collect::<Vec<_>>();
-        names.sort();
-        names
+    fn filtered_router(&self)->ToolRouter<Self> {
+        let mut router=Self::all_tool_router();
+        let enabled=self.groups.enabled_tools();
+        for name in ["read","write","edit","grep","glob","bash","wait","kill_job","ast_grep","ast_edit","resolve","reject","lsp","ls"] {
+            if !enabled.contains(name) { router.disable_route(name); }
+        }
+        router
     }
+    pub fn tool_names()->Vec<String> { Self::new(PathBuf::from(".")).tool_names_for_instance() }
+    pub fn tool_names_for_instance(&self)->Vec<String> { self.filtered_router().list_all().into_iter().map(|t|t.name.to_string()).collect() }
     fn path(&self,p:&str)->PathBuf {let p=Path::new(p); if p.is_absolute(){p.to_path_buf()} else {self.root.join(p)}}
     /// Appends settled background-job results to this tool's result (MCP has no server-initiated turns).
     fn deliver(&self,mut r:CallToolResult)->CallToolResult {
@@ -158,7 +164,7 @@ pub struct GrepArgs {/// Search pattern (regex)
     gitignore:Option<bool>, /// Number of files to skip, for pagination
     skip:Option<f64>}
 
-#[tool_router(server_handler)]
+#[tool_router(router = all_tool_router)]
 impl CodingTools {
     #[tool(description = "Read a file, directory or image. Line selectors go in the path (`src/a.rs:50-80`, `:-5`, `:raw`). Text rows are `N:text` under a `[path#TAG]` snapshot header that `edit` anchors on.", annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     fn read(&self,Parameters(args):Parameters<ReadArgs>)->CallToolResult {
@@ -276,6 +282,8 @@ impl CodingTools {
         ok(self.jobs.cancel(&args.id))
     }
 }
+#[tool_handler(router = self.filtered_router())]
+impl ServerHandler for CodingTools {}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,7 +294,7 @@ mod tests {
         assert!(cut.starts_with(&"a".repeat(49_999)));
     }
     #[test] fn tools_declare_accurate_annotations(){
-        let tools=CodingTools::tool_router().list_all();
+        let tools=CodingTools::new(PathBuf::from(".")).filtered_router().list_all();
         let ann=|n:&str|tools.iter().find(|t|t.name==n).and_then(|t|t.annotations.clone()).unwrap_or_else(||panic!("{n} has no annotations"));
         for n in ["read","grep","glob","ls","ast_grep","wait"]{let a=ann(n);assert_eq!((a.read_only_hint,a.destructive_hint),(Some(true),Some(false)),"{n}");}
         for n in ["write","edit","ast_edit","resolve","bash","kill_job","lsp"]{let a=ann(n);assert_eq!((a.read_only_hint,a.destructive_hint),(Some(false),Some(true)),"{n}");}
@@ -297,6 +305,11 @@ mod tests {
         let names=CodingTools::tool_names();
         assert_eq!(names.len(),14);
         for n in ["read","write","edit","glob","grep","bash","wait","kill_job","ast_grep","ast_edit","resolve","reject","lsp","ls"]{assert!(names.iter().any(|x|x==n),"{n}");}
+    }
+    #[test] fn core_group_hides_optional_tools(){
+        let groups=tool_groups::ToolGroups::from_names(["core"]).unwrap();
+        let names=CodingTools::with_groups(PathBuf::from("/tmp"),groups).tool_names_for_instance();
+        assert_eq!(names, vec!["bash","edit","glob","grep","kill_job","read","wait","write"]);
     }
     #[test] fn process_limit_is_shared_by_sessions(){
         let a=CodingTools::new(PathBuf::from("/tmp"));

@@ -41,8 +41,9 @@ async fn run() -> Result<()> {
     emit(serde_json::json!({"type":"log","message":"Full filesystem and shell permissions enabled; the workspace is not a sandbox."}));
     emit(serde_json::json!({"type":"log","message":format!("Workspace: {}",workspace.display())}));
     emit(serde_json::json!({"type":"phase","message":"Starting Rust MCP server"}));
+    let groups=ai_local_hub_runtime::tools::ToolGroups::from_env().map_err(|e|anyhow::anyhow!("invalid AI_LOCAL_HUB_TOOL_GROUPS: {e}"))?;
     let service: StreamableHttpService<CodingTools, LocalSessionManager> = StreamableHttpService::new(
-        { let workspace=workspace.clone(); move || Ok(CodingTools::new(workspace.clone())) },
+        { let workspace=workspace.clone(); let groups=groups.clone(); move || Ok(CodingTools::with_groups(workspace.clone(),groups.clone())) },
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default(),
     );
@@ -56,7 +57,7 @@ async fn run() -> Result<()> {
     let mcp_url = format!("http://127.0.0.1:{port}/mcp");
     emit(serde_json::json!({"type":"mcp","url":mcp_url}));
     emit(serde_json::json!({"type":"log","message":format!("MCP ready: {mcp_url}")}));
-    let tool_names=CodingTools::tool_names();
+    let tool_names=CodingTools::with_groups(workspace.clone(),groups).tool_names_for_instance();
     emit(serde_json::json!({"type":"log","message":format!("Tools ({}): {}",tool_names.len(),tool_names.join(", "))}));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let mut shutdown_http = shutdown_rx.clone();

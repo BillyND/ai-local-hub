@@ -19,6 +19,7 @@ export function InstanceFormDialog() {
   const [tunnelId, setTunnelId] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [toolGroups, setToolGroups] = useState(['core', 'ast', 'lsp', 'ls'])
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [browsing, setBrowsing] = useState(false)
@@ -32,6 +33,7 @@ export function InstanceFormDialog() {
     setWorkspaceRoot(instance?.workspaceRoot ?? homeDir)
     setTunnelId(instance?.tunnelId ?? '')
     setApiKey('')
+    setToolGroups(instance?.toolGroups?.length ? instance.toolGroups : ['core', 'ast', 'lsp', 'ls'])
     setShowKey(false)
     setError(null)
     setPending(false)
@@ -43,7 +45,7 @@ export function InstanceFormDialog() {
     setPending(true)
     setError(null)
     try {
-      await submitInstance({ name: name.trim(), workspaceRoot: workspaceRoot.trim(), tunnelId: tunnelId.trim(), apiKey })
+      await submitInstance({ name: name.trim(), workspaceRoot: workspaceRoot.trim(), tunnelId: tunnelId.trim(), apiKey, toolGroups })
       closeForm()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed')
@@ -95,6 +97,22 @@ export function InstanceFormDialog() {
               </div>
               {editing && <p id="inst-key-help" className="text-xs text-muted-foreground">Leave empty to keep the current key</p>}
             </div>
+            <fieldset className="grid gap-2">
+              <legend className="text-sm font-medium">Tool groups</legend>
+              <p className="text-xs text-muted-foreground">Core tools are always enabled. Disable optional groups to reduce the tools shown to ChatGPT.</p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {[
+                  ['ast', 'AST search and rewrites'],
+                  ['lsp', 'Language server actions'],
+                  ['ls', 'Directory listing'],
+                ].map(([group, label]) => (
+                  <label key={group} className="flex items-start gap-2 text-sm">
+                    <input type="checkbox" checked={toolGroups.includes(group)} onChange={(e) => setToolGroups((current) => e.target.checked ? [...current, group] : current.filter((value) => value !== group))} />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={closeForm}>Cancel</Button>

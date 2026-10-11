@@ -14,9 +14,9 @@ npm run build
 npm start
 ```
 
-The manager opens a local UI (default port 4747). The UI lets you create, edit, start, stop and delete independent instances, browse workspace folders, view live logs, copy local MCP addresses, and start or stop every instance.
+The manager opens a local UI (default port 4747). The UI lets you create, edit, start, stop and delete independent instances, browse workspace folders, choose optional MCP tool groups, view live logs, copy local MCP addresses, and start or stop every instance.
 
-Each instance has its own workspace, Tunnel ID, runtime API key, native Rust worker, local MCP HTTP endpoint and (when enabled) official OpenAI tunnel-client process. The hub does **not** embed Bun or Node.js in the app's runtime.
+Each instance has its own workspace, Tunnel ID, runtime API key, selected tool groups, native Rust worker, local MCP HTTP endpoint and (when enabled) official OpenAI tunnel-client process. The default groups are `core`, `ast`, `lsp`, and `ls`; `core` contains `read`, `write`, `edit`, `grep`, `glob`, `bash`, `wait`, and `kill_job`. The hub does **not** embed Bun or Node.js in the app's runtime.
 
 ```bash
 npm start -- --no-open          # print URL instead of opening browser
@@ -55,6 +55,8 @@ The app reuses the existing manager lock when one is already running. On macOS a
 The remote handshake depends on OpenAI authorization and configuration. Native `--local-only` tests do not validate a remote tunnel.
 
 ## Available MCP tools
+Tool groups are configured per instance. `core` is always enabled; `ast`, `lsp`, and `ls` are optional. Changing the selection requires restarting the instance so the MCP tool list is rebuilt.
+
 
 | Tool | Behavior |
 | --- | --- |

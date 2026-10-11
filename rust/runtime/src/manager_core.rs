@@ -19,7 +19,7 @@ impl Status {
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct InstanceView<'a>{
-    id:&'a str,name:&'a str,workspace_root:&'a str,tunnel_id:&'a str,has_api_key:bool,status:Status
+    id:&'a str,name:&'a str,workspace_root:&'a str,tunnel_id:&'a str,has_api_key:bool,tool_groups:&'a [String],status:Status
 }
 struct Entry{status:Status,logs:VecDeque<String>,generation:u64,stop:Option<oneshot::Sender<()>>,active_worker:bool}
 impl Default for Entry {
@@ -46,14 +46,14 @@ impl RuntimeManager{
     pub async fn view(&self,config:&InstanceConfig)->Value{
         let entries=self.entries.lock().await;
         let status=entries.get(&config.id).map(|e|e.status.clone()).unwrap_or_else(Status::stopped);
-        serde_json::to_value(InstanceView{id:&config.id,name:&config.name,workspace_root:&config.workspace_root,tunnel_id:&config.tunnel_id,has_api_key:true,status}).unwrap()
+        serde_json::to_value(InstanceView{id:&config.id,name:&config.name,workspace_root:&config.workspace_root,tunnel_id:&config.tunnel_id,has_api_key:true,tool_groups:&config.tool_groups,status}).unwrap()
     }
     pub async fn views(&self)->Vec<Value>{
         let configs=self.config.lock().await.instances.clone();
         let entries=self.entries.lock().await;
         configs.iter().map(|c|{
             let status=entries.get(&c.id).map(|e|e.status.clone()).unwrap_or_else(Status::stopped);
-            json!({"id":c.id,"name":c.name,"workspaceRoot":c.workspace_root,"tunnelId":c.tunnel_id,"hasApiKey":true,"status":status})
+            json!({"id":c.id,"name":c.name,"workspaceRoot":c.workspace_root,"tunnelId":c.tunnel_id,"hasApiKey":true,"toolGroups":c.tool_groups,"status":status})
         }).collect()
     }
     pub async fn announce(&self){self.broadcast(json!({"type":"instances","instances":self.views().await}));}
@@ -138,6 +138,7 @@ impl RuntimeManager{
         cmd.env("WORKSPACE_ROOT",&inst.workspace_root)
             .env("OPENAI_TUNNEL_ID",&inst.tunnel_id)
             .env("OPENAI_API_KEY",&inst.api_key)
+            .env("AI_LOCAL_HUB_TOOL_GROUPS",inst.tool_groups.join(","))
             .env("WORKSPACE_TOOLS_CACHE_DIR",&self.cache_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

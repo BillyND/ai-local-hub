@@ -14,6 +14,7 @@ export interface InstanceView {
   workspaceRoot: string
   tunnelId: string
   hasApiKey: true
+  toolGroups: string[]
   status: Status
 }
 
@@ -29,6 +30,7 @@ export interface InstanceInput {
   workspaceRoot: string
   tunnelId: string
   apiKey?: string
+  toolGroups?: string[]
 }
 
 export interface FsListing {

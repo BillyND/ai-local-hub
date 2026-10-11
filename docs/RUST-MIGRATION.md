@@ -118,4 +118,6 @@ Phase 5 (lsp) done: `tools/lsp_client.rs` (JSON-RPC client, document sync, push 
 
 LSP deviations from omp: no lspmux / shared-server broker, no idle shutdown of servers, no biome / swiftlint CLI linter clients, no write-through diagnostics (that belongs to omp's edit/write tools), a client is created lazily per MCP session and stopped when the session ends; like omp, the first call to a server that sends no progress notifications waits up to 15s for project load; status icons are fixed to the unicode preset (`✔ ✘ ⚠`, `❯`).
 
+Phase 6 (per-instance tool groups) done: manager config stores `toolGroups`, the UI exposes optional `ast` / `lsp` / `ls` checkboxes, and the worker reads `AI_LOCAL_HUB_TOOL_GROUPS` to filter MCP `list_tools` and calls through rmcp's route disabling. `core` is always enabled (`read`, `write`, `edit`, `grep`, `glob`, `bash`, `wait`, `kill_job`). Real manager test verifies a second instance started with only `core` exposes exactly those tools.
+
 Not started: debug, eval (see plan).

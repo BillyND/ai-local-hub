@@ -2,15 +2,16 @@ use anyhow::{bail,Context,Result};
 use serde::{Deserialize,Serialize};
 use std::{env,fs,path::{Path,PathBuf}};
 use uuid::Uuid;
+fn default_tool_groups()->Vec<String>{vec!["core".into(),"ast".into(),"lsp".into(),"ls".into()]}
 #[derive(Debug,Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct InstanceConfig {pub id:String,pub name:String,pub workspace_root:String,pub tunnel_id:String,pub api_key:String}
+pub struct InstanceConfig {pub id:String,pub name:String,pub workspace_root:String,pub tunnel_id:String,pub api_key:String,#[serde(default = "default_tool_groups")]pub tool_groups:Vec<String>}
 #[derive(Debug,Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct StoredConfig {pub version:u8,pub cache_dir:String,pub instances:Vec<InstanceConfig>}
 #[derive(Debug,Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct InstanceInput {pub name:String,pub workspace_root:String,pub tunnel_id:String,#[serde(default)]pub api_key:String}
+pub struct InstanceInput {pub name:String,pub workspace_root:String,pub tunnel_id:String,#[serde(default)]pub api_key:String,#[serde(default = "default_tool_groups")]pub tool_groups:Vec<String>}
 pub fn home()->PathBuf{dirs::home_dir().unwrap_or_else(||PathBuf::from("."))}
 fn expand(s:&str)->PathBuf {
     if s=="~"{home()} else if let Some(s)=s.strip_prefix("~/"){home().join(s)}else{PathBuf::from(s)}
@@ -23,20 +24,24 @@ pub fn cache_dir(saved:&StoredConfig)->PathBuf{
     env::var("WORKSPACE_TOOLS_CACHE_DIR").ok().filter(|s|!s.trim().is_empty())
         .map(|s|expand(s.trim())).unwrap_or_else(||expand(&saved.cache_dir))
 }
+fn canonical_tool_groups(groups: Vec<String>)->Result<Vec<String>>{
+    crate::tools::ToolGroups::from_names(groups.iter()).map(|g|g.names()).map_err(|e|anyhow::anyhow!(e))
+}
 pub fn load(path:&Path)->Result<StoredConfig>{
     if !path.exists(){return Ok(StoredConfig{version:2,cache_dir:home().join(".cache/workspace-tools-mcp").to_string_lossy().into(),instances:vec![]});}
     let raw=fs::read(path).with_context(||format!("Read config {}",path.display()))?;
     let val:serde_json::Value=serde_json::from_slice(&raw).context("Invalid saved JSON config")?;
-    let config:StoredConfig=if val["version"]==1{
+    let mut config:StoredConfig=if val["version"]==1{
         let tunnel=val["openaiTunnelId"].as_str().context("Invalid legacy tunnelId")?;
         let key=val["openaiApiKey"].as_str().context("Invalid legacy key")?;
         let workspace=val["workspaceRoot"].as_str().context("Invalid legacy workspaceRoot")?;
         let cache=val["cacheDir"].as_str().context("Invalid legacy cacheDir")?;
-        StoredConfig{version:2,cache_dir:cache.into(),instances:if key.is_empty()||tunnel.is_empty(){vec![]}else{vec![InstanceConfig{id:"default".into(),name:"default".into(),workspace_root:workspace.into(),tunnel_id:tunnel.into(),api_key:key.into()}]}}
+        StoredConfig{version:2,cache_dir:cache.into(),instances:if key.is_empty()||tunnel.is_empty(){vec![]}else{vec![InstanceConfig{id:"default".into(),name:"default".into(),workspace_root:workspace.into(),tunnel_id:tunnel.into(),api_key:key.into(),tool_groups:default_tool_groups()}]}}
     }else{
         serde_json::from_value(val).context("Invalid config structure")?
     };
     if config.version!=2 {bail!("Unsupported saved config version");}
+    for instance in &mut config.instances { instance.tool_groups=canonical_tool_groups(std::mem::take(&mut instance.tool_groups)).with_context(||format!("Invalid toolGroups for instance {}",instance.name))?; }
     #[cfg(unix)]{use std::os::unix::fs::PermissionsExt;fs::set_permissions(path,fs::Permissions::from_mode(0o600))?;}
     Ok(config)
 }
@@ -69,7 +74,8 @@ pub fn normalize(input:InstanceInput,others:&[InstanceConfig],existing_id:Option
     let workspace=if workspace.is_absolute(){workspace}else{env::current_dir()?.join(workspace)};
     let workspace=workspace.canonicalize().with_context(||format!("Workspace folder must be an existing directory: {}",workspace.display()))?;
     if !workspace.is_dir(){bail!("Workspace folder must be an existing directory");}
-    Ok(InstanceConfig{id:existing_id.map(str::to_string).unwrap_or_else(||Uuid::new_v4().to_string()[..8].into()),name,workspace_root:workspace.to_string_lossy().into_owned(),tunnel_id,api_key})
+    let tool_groups=canonical_tool_groups(input.tool_groups)?;
+    Ok(InstanceConfig{id:existing_id.map(str::to_string).unwrap_or_else(||Uuid::new_v4().to_string()[..8].into()),name,workspace_root:workspace.to_string_lossy().into_owned(),tunnel_id,api_key,tool_groups})
 }
 #[cfg(test)]
 mod tests{
@@ -96,9 +102,9 @@ mod tests{
         fs::remove_dir_all(folder).unwrap();
     }
     #[test] fn invalid_duplicate_and_folder(){
-        let i=InstanceInput{name:" alpha ".into(),workspace_root:".".into(),tunnel_id:"tunnel".into(),api_key:"key".into()};
+        let i=InstanceInput{name:" alpha ".into(),workspace_root:".".into(),tunnel_id:"tunnel".into(),api_key:"key".into(),tool_groups:default_tool_groups()};
         let one=normalize(i, &[],None).unwrap();
-        let two=InstanceInput{name:"ALPHA".into(),workspace_root:".".into(),tunnel_id:"other".into(),api_key:"key".into()};
+        let two=InstanceInput{name:"ALPHA".into(),workspace_root:".".into(),tunnel_id:"other".into(),api_key:"key".into(),tool_groups:default_tool_groups()};
         assert!(normalize(two,&[one],None).is_err());
     }
 }

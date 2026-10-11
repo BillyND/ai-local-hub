@@ -85,21 +85,25 @@ try {
  } finally{await client.close();}
  // Two instances must remain independently accessible and stoppable.
  const otherRoot=join(root,"second");await mkdir(otherRoot);
- const second=await api("POST","/instances",{name:"second",workspaceRoot:otherRoot,tunnelId:"demo2",apiKey:"sk-for-second"});
- assert.equal(second.status,201);
- const secondId=second.data.id;
+const second=await api("POST","/instances",{name:"second",workspaceRoot:otherRoot,tunnelId:"demo2",apiKey:"sk-for-second",toolGroups:["core"]});
+assert.equal(second.status,201);
+assert.deepEqual(second.data.toolGroups,["core"]);
+const secondId=second.data.id;
  assert.equal((await api("POST",`/instances/${secondId}/start`,{})).status,200);
  const secondView=await waitFor(async()=>{
    const s=await api("GET","/state");
    const second=s.data.instances.find(i=>i.id===secondId);
    return second?.status.state==="running"?second:null;
  },"second worker running");
- const secondClient=new Client({name:"second-worker-smoke",version:"1"});
- try{
-   await secondClient.connect(new StreamableHTTPClientTransport(new URL(secondView.status.url)));
-   assert.notEqual((await secondClient.callTool({name:"write",arguments:{path:"isolated.txt",content:"second only"}})).isError,true);
-   assert.equal(await readFile(join(otherRoot,"isolated.txt"),"utf8"),"second only");
- }finally{await secondClient.close();}
+const secondClient=new Client({name:"second-worker-smoke",version:"1"});
+try{
+  await secondClient.connect(new StreamableHTTPClientTransport(new URL(secondView.status.url)));
+  const secondTools=(await secondClient.listTools()).tools.map((tool)=>tool.name).sort();
+  assert.deepEqual(secondTools,["bash","edit","glob","grep","kill_job","read","wait","write"]);
+  assert.notEqual((await secondClient.callTool({name:"write",arguments:{path:"isolated.txt",content:"second only"}})).isError,true);
+  assert.equal(await readFile(join(otherRoot,"isolated.txt"),"utf8"),"second only");
+  await assert.rejects(() => secondClient.callTool({name:"lsp",arguments:{action:"status"}}), /tool not found|Method not found|Invalid params/);
+}finally{await secondClient.close();}
  // Every tool call must leave one structured line in the instance Logs panel.
  const logs=await api("GET",`/instances/${id}/logs`);
  assert.equal(logs.status,200);
