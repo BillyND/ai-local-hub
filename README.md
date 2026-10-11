@@ -1,6 +1,6 @@
-# ChatGPT Local Tools
+# AI Local Hub
 
-An independently developed local MCP server exposing Pi's built-in coding tools directly to ChatGPT Web and other MCP clients. ChatGPT remains the agent; this project does not run a second model or reimplement Pi's tool behavior.
+AI Local Hub connects AI clients, including ChatGPT, to coding tools on your computer through MCP. The AI client remains the agent; this app runs no local AI model. Future skills and extensions can be added to the hub.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ npm run build   # compiles + bundles the server and builds the web UI into dist/
 npm start
 ```
 
-`npm start` starts the manager and opens its **web UI** in your browser (the link is also printed in the terminal). Each **instance** has its own name, workspace folder, OpenAI Tunnel ID and API key, and runs as a separate worker process with its own loopback MCP endpoint and tunnel. Use one instance per ChatGPT account/workspace; several can run side by side.
+`npm start` starts the manager and opens its **web UI** in your browser (the link is also printed in the terminal). Each **instance** has its own name, workspace folder, OpenAI Tunnel ID and API key, and runs as a separate worker process with its own loopback MCP endpoint and tunnel. Use one instance per AI client account/workspace; several can run side by side.
 
 In the UI you can add, edit and delete instances, start or stop each one (or all), pick the workspace folder with a folder browser, copy the MCP URL, and watch live logs. `Quit` (or Ctrl+C in the terminal) stops every instance and exits. Running `npm start` again while a manager is already running just reopens it.
 
@@ -35,7 +35,7 @@ npm start -- --reset           # delete saved settings and exit
 
 **The web UI controls instances that give the connected ChatGPT account full shell and filesystem access, so it is locked down:** it binds to `127.0.0.1` only, requires a random per-launch token (the first visit exchanges the link's token for an `HttpOnly`, `SameSite=Strict` cookie), rejects foreign `Host` headers (DNS rebinding) and cross-origin or non-JSON changes, and sends a strict Content-Security-Policy. Anyone who can read the link printed in your terminal can control the manager, so do not share it. Headless mode (`--headless`) has no UI and no listener.
 
-**Memory and CPU.** `npm run build` bundles the manager (`dist/chatgpt-local-tools.mjs`, no Pi SDK) and each worker (`dist/chatgpt-local-tools-worker.mjs`, Pi's tool factories only, plus `dist/image-resize-worker.js` and `photon_rs_bg.wasm` for image reads). Measured on macOS arm64 with Node 22 and local-only instances: the manager idles at about 60 MB and each worker at about 90 MB RSS, with ~0% idle CPU (3 instances: ~330 MB total; the unbundled build needed ~500 MB). Real tunnels add the official tunnel-client process per instance, which is not included in these numbers. Logs are kept in memory only, 1000 lines per instance, cleared when the instance restarts.
+**Memory and CPU.** `npm run build` bundles the manager (`dist/ai-local-hub.mjs`, no Pi SDK) and each worker (`dist/ai-local-hub-worker.mjs`, Pi's tool factories only, plus `dist/image-resize-worker.js` and `photon_rs_bg.wasm` for image reads). Measured on macOS arm64 with Node 22 and local-only instances: the manager idles at about 60 MB and each worker at about 90 MB RSS, with ~0% idle CPU (3 instances: ~330 MB total; the unbundled build needed ~500 MB). Real tunnels add the official tunnel-client process per instance, which is not included in these numbers. Logs are kept in memory only, 1000 lines per instance, cleared when the instance restarts.
 
 ### Developing the UI
 
@@ -48,7 +48,7 @@ npm run dev:web                          # terminal 2: Vite on http://127.0.0.1:
 
 ## Desktop app (macOS, Windows, Linux)
 
-ChatGPT Local Tools is a thin [Tauri 2](https://tauri.app) shell around the same manager and web UI: one window that loads the UI served by the embedded manager, so there is no second UI to maintain. It bundles its own [Bun](https://bun.sh) runtime (pinned, checksum-verified), so users need nothing installed.
+AI Local Hub is a thin [Tauri 2](https://tauri.app) shell around the same manager and web UI: one window that loads the UI served by the embedded manager, so there is no second UI to maintain. It bundles its own [Bun](https://bun.sh) runtime (pinned, checksum-verified), so users need nothing installed.
 
 - **Start:** opening the app starts the manager and shows the UI. If a manager is already running (for example `npm start`), the app attaches to it instead of starting another and leaves it running when the window closes; if that manager is stopped (its Quit button or Ctrl+C), the app closes too. If the manager fails to start or hangs for 30 s, the window shows the reason instead of a blank page.
 - **Close vs quit:** on macOS and Windows, closing the window keeps your instances running in the background (menu-bar or tray icon: *Show*, *Quit and stop all instances*; reopen from the Dock on macOS). On Linux there is no dependable tray, so closing the window quits. The UI's *Quit* button and the tray's Quit always stop every instance.

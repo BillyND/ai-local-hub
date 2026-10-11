@@ -1,8 +1,8 @@
 {
-  "name": "chatgpt-local-tools",
+  "name": "ai-local-hub",
   "version": "0.1.0",
   "private": true,
-  "description": "Pi SDK coding tools for ChatGPT over OpenAI Secure MCP Tunnel",
+  "description": "Local MCP tools for AI clients, with room for skills and extensions",
   "type": "module",
   "engines": {
     "node": ">=22.19.0"
@@ -11,7 +11,7 @@
     "postinstall": "npm --prefix web install --no-audit --no-fund",
     "build": "tsc -p tsconfig.json && node scripts/bundle.mjs && npm --prefix web run build",
     "build:server": "tsc -p tsconfig.json && node scripts/bundle.mjs",
-    "start": "node dist/chatgpt-local-tools.mjs",
+    "start": "node dist/ai-local-hub.mjs",
     "dev": "tsx src/index.ts",
     "dev:web": "npm --prefix web run dev",
     "test": "tsx --test tests/*.test.ts",

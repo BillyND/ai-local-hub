@@ -1,7 +1,7 @@
 [package]
-name = "chatgpt-local-tools-desktop"
+name = "ai-local-hub-desktop"
 version = "0.1.0"
-description = "Desktop shell for ChatGPT Local Tools"
+description = "Desktop shell for AI Local Hub"
 edition = "2021"
 rust-version = "1.80"
 

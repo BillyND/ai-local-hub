@@ -55,7 +55,7 @@ export async function runInstance(options: RunInstanceOptions): Promise<void> {
       mode: 0o700,
     });
     runtimeDir = await mkdtemp(
-      join(options.cacheDir, "runtime", "chatgpt-local-tools-"),
+      join(options.cacheDir, "runtime", "ai-local-hub-"),
     );
     emit({ type: "phase", message: "Connecting tunnel" });
     tunnel = await startTunnel({

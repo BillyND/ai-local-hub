@@ -1,4 +1,4 @@
-// Bundles the manager and the worker into dist/chatgpt-local-tools.mjs and dist/chatgpt-local-tools-worker.mjs.
+// Bundles the manager and the worker into dist/ai-local-hub.mjs and dist/ai-local-hub-worker.mjs.
 //
 // Why: loading the whole Pi SDK costs ~95 MB of RSS per process (AI providers, TUI, syntax
 // highlighting, image codecs...). The worker only needs Pi's tool factories, so its bundle
@@ -34,10 +34,10 @@ const common = {
   },
 };
 
-await build({ ...common, entryPoints: { "chatgpt-local-tools": "src/index.ts" } });
+await build({ ...common, entryPoints: { "ai-local-hub": "src/index.ts" } });
 await build({
   ...common,
-  entryPoints: { "chatgpt-local-tools-worker": "src/worker-main.ts" },
+  entryPoints: { "ai-local-hub-worker": "src/worker-main.ts" },
   alias: { "@earendil-works/pi-coding-agent": piTools },
 });
 

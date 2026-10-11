@@ -8,7 +8,7 @@ runWorker(process.argv.includes("--local-only")).then(
   },
   () => {
     // Never print unredacted errors from cleanup or third-party code.
-    process.stderr.write("[chatgpt-local-tools] Worker failed.\n");
+    process.stderr.write("[ai-local-hub] Worker failed.\n");
     process.exitCode = 1;
   },
 );

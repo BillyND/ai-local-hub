@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ChatGPT Local Tools",
+  "productName": "AI Local Hub",
   "version": "../../package.json",
-  "identifier": "com.chatgptlocaltools.desktop",
+  "identifier": "com.ailocalhub.desktop",
   "build": {
     "frontendDist": "../splash"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "ChatGPT Local Tools",
+        "title": "AI Local Hub",
         "width": 1180,
         "height": 780,
         "minWidth": 420,
@@ -28,9 +28,9 @@
     "targets": "all",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "category": "DeveloperTool",
-    "shortDescription": "Local coding tools for ChatGPT and MCP clients",
-    "longDescription": "Manage several ChatGPT accounts, each with its own OpenAI tunnel, exposing local coding tools over MCP.",
-    "externalBin": ["binaries/chatgpt-local-tools-bun"],
+    "shortDescription": "Local MCP tools for AI clients",
+    "longDescription": "Manage local MCP instances that connect AI clients to coding tools and future extensions.",
+    "externalBin": ["binaries/ai-local-hub-bun"],
     "resources": { "resources/app/": "app/" },
     "macOS": {
       "minimumSystemVersion": "11.0",

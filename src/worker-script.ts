@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CANDIDATES = [
-  "chatgpt-local-tools-worker.mjs", // bundled build (npm run build)
+  "ai-local-hub-worker.mjs", // bundled build (npm run build)
   "worker-main.js", // tsc output
   "worker-main.ts", // running from source with tsx
 ];

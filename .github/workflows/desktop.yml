@@ -95,7 +95,7 @@ jobs:
           args: --target ${{ matrix.target }}
           # On a tag push this creates a draft release; manual runs only upload workflow artifacts.
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('ChatGPT Local Tools {0}', github.ref_name) || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('AI Local Hub {0}', github.ref_name) || '' }}
           releaseBody: 'Unsigned build. See the README for the first-run steps on macOS and Windows.'
           releaseDraft: true
           prerelease: false
@@ -103,7 +103,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
-          name: chatgpt-local-tools-${{ matrix.target }}
+          name: ai-local-hub-${{ matrix.target }}
           path: |
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi

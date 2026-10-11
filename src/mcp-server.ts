@@ -206,7 +206,7 @@ export async function startMcpServer(
         onsessionclosed: removeSession,
       });
       server = new McpServer(
-        { name: "chatgpt-local-tools", version },
+        { name: "ai-local-hub", version },
         {
           instructions: `Use these Pi SDK tools directly. Relative paths and shell commands start in ${workspaceRoot}. Full process permissions are enabled; the workspace is not a sandbox. Use read before edit; edit requires exact unique oldText replacements in edits[].`,
         },

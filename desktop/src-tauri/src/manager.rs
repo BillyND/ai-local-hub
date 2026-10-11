@@ -159,9 +159,9 @@ fn run(app: &AppHandle) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate the app: {e}"))?;
     let runtime = plain(exe.parent().ok_or("cannot locate the app directory")?.join(
         if cfg!(windows) {
-            "chatgpt-local-tools-bun.exe"
+            "ai-local-hub-bun.exe"
         } else {
-            "chatgpt-local-tools-bun"
+            "ai-local-hub-bun"
         },
     ));
     if !runtime.exists() {
@@ -172,7 +172,7 @@ fn run(app: &AppHandle) -> Result<(), String> {
     }
     let script = plain(
         app.path()
-            .resolve("app/dist/chatgpt-local-tools.mjs", BaseDirectory::Resource)
+            .resolve("app/dist/ai-local-hub.mjs", BaseDirectory::Resource)
             .map_err(|e| format!("cannot locate the bundled manager: {e}"))?,
     );
     // Run from the bundle directory so Bun finds no stray bunfig.toml or .env of the user's.

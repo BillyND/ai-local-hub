@@ -1,8 +1,8 @@
 {
-  "name": "chatgpt-local-tools-desktop",
+  "name": "ai-local-hub-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Tauri desktop shell for ChatGPT Local Tools",
+  "description": "Tauri desktop shell for AI Local Hub",
   "scripts": {
     "tauri": "tauri",
     "stage": "node ../scripts/stage-desktop.mjs",
