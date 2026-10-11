@@ -25,5 +25,6 @@ try{
  exec('node',['go/tests/manager-smoke.mjs']);
  exec('node',['go/tests/hardening-smoke.mjs']);
  exec('node',['go/tests/tunnel-fixture-smoke.mjs']);
+ exec('node',['go/tests/reliability-smoke.mjs']);
  console.log('\nGO DEVELOPMENT VERIFICATION: PASS (macOS/Linux native only; desktop and remote ChatGPT not tested)');
 }finally{rmSync(tmp,{recursive:true,force:true})}
