@@ -1,22 +1,23 @@
-import { MonitorIcon, MoonIcon, SunIcon } from 'lucide-react'
+import { MoonIcon, SunIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useTheme } from '@/hooks/use-theme'
 
+/** One-click light/dark switch. Until it is clicked the theme follows the system setting. */
 export function ThemeToggle() {
-  const { choice, theme, setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
+  const next = theme === 'dark' ? 'light' : 'dark'
+  const label = `Switch to ${next} mode`
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon" aria-label={`Theme: ${choice}`}>
-          {theme === 'dark' ? <MoonIcon /> : <SunIcon />}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={() => setTheme('light')}><SunIcon />Light</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setTheme('dark')}><MoonIcon />Dark</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setTheme('system')}><MonitorIcon />System</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Button
+      variant="outline"
+      size="icon"
+      className="relative"
+      aria-label={label}
+      title={label}
+      onClick={() => setTheme(next)}
+    >
+      <SunIcon className="size-4 scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90" />
+      <MoonIcon className="absolute size-4 scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0" />
+    </Button>
   )
 }
