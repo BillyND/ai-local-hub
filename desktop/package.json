@@ -7,7 +7,7 @@
     "tauri": "tauri",
     "stage": "node ../scripts/stage-rust-desktop.mjs",
     "dev": "npm run stage && tauri dev",
-    "build": "npm run stage && tauri build"
+    "build": "npm run stage && tauri build && node ../scripts/verify-desktop-build.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.2"

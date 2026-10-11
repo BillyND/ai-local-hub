@@ -74,6 +74,27 @@ pub fn normalize(input:InstanceInput,others:&[InstanceConfig],existing_id:Option
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn legacy_config_converts_and_saves_without_losing_instances(){
+        let folder=std::env::temp_dir().join(format!("hub-config-test-{}",Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let path=folder.join("config.json");
+        fs::write(&path,serde_json::json!({
+            "version":1,"workspaceRoot":folder,"openaiTunnelId":"t",
+            "openaiApiKey":"test-only-key","cacheDir":folder.join("cache")
+        }).to_string()).unwrap();
+        let config=load(&path).unwrap();
+        assert_eq!(config.version,2);
+        assert_eq!(config.instances.len(),1);
+        assert_eq!(config.instances[0].id,"default");
+        save(&path,&config).unwrap();
+        let persisted=load(&path).unwrap();
+        assert_eq!(persisted.instances[0].api_key,"test-only-key");
+        #[cfg(unix)]{
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode()&0o777,0o600);
+        }
+        fs::remove_dir_all(folder).unwrap();
+    }
     #[test] fn invalid_duplicate_and_folder(){
         let i=InstanceInput{name:" alpha ".into(),workspace_root:".".into(),tunnel_id:"tunnel".into(),api_key:"key".into()};
         let one=normalize(i, &[],None).unwrap();

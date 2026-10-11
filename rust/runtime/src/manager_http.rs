@@ -223,3 +223,28 @@ pub async fn listen(manager:Arc<RuntimeManager>,web_dir:PathBuf,token:String,pre
     };
     Ok((port,future))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn host_and_origin_reject_untrusted_values(){
+        let mut headers=HeaderMap::new();
+        headers.insert(HOST,"localhost:4747".parse().unwrap());
+        headers.insert(ORIGIN,"http://localhost:4747".parse().unwrap());
+        assert!(allowed_host(&headers,4747));
+        assert!(origin_ok(&headers,4747));
+        headers.insert(HOST,"localhost:4747.evil.example".parse().unwrap());
+        assert!(!allowed_host(&headers,4747));
+        headers.insert(HOST,"localhost:4747".parse().unwrap());
+        headers.insert(ORIGIN,"https://evil.example".parse().unwrap());
+        assert!(!origin_ok(&headers,4747));
+    }
+    #[test]
+    fn session_cookie_requires_exact_token(){
+        let mut headers=HeaderMap::new();
+        headers.insert(COOKIE,"x=y; wtm_session=secret".parse().unwrap());
+        assert!(authorized(&headers,"secret"));
+        assert!(!authorized(&headers,"secrett"));
+    }
+}

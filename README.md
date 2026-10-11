@@ -90,9 +90,10 @@ Tunnel archive checksum verification protects against accidental/corrupted downl
 npm run build             # Rust release executables + React UI
 npm test                  # Rust MCP smoke, Rust manager/API integration, cargo tests
 npm run test:legacy       # old TypeScript regression suite (reference runtime)
+node scripts/verify-desktop-build.mjs  # verify native app sidecars and macOS DMG
 ```
 
-The native integration test performs MCP initialize/list tools/write/read/edit/grep/find/ls/bash/image and verifies errors; the manager test exercises auth, config CRUD, start/stop worker, native MCP connection and shutdown.
+The native integration tests cover MCP initialize, all seven tools, errors, command stdout/stderr, timeout, truncation, large files, symlink edits, Host/Origin validation, and full-access absolute paths. The manager test covers auth, config CRUD, failed-save rollback, two isolated workers, worker stop, native MCP and shutdown. Additional Rust unit tests cover token/host validation, config migration, shared process limits and UTF-8 truncation.
 
 A Tauri release compilation can be checked with `cd desktop && ./node_modules/.bin/tauri build --no-bundle` after assets are staged. Test signed installers, startup/shutdown, GitHub macOS x64 cross-build, Windows/Linux shell behavior and **real OpenAI tunnel connection** on the respective platforms before a broad release.
 

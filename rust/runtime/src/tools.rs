@@ -307,6 +307,7 @@ impl CodingTools {
             let _=child.start_kill();
             let _=timeout(Duration::from_secs(2),child.wait()).await;
         }
+        group_guard.0=None;
         // Continue draining even if output exceeds the response cap, so a chatty child
         // cannot block forever on a full pipe. Bound the drain after process exit.
         if timeout(Duration::from_secs(2),async {
@@ -328,8 +329,6 @@ impl CodingTools {
             Ok(Ok(status))=>status.code(),
             _=>None,
         };
-        // Child has exited or we have already sent a kill on timeout.
-        group_guard.0=None;
         let mut response=if timed_out||code!=Some(0){err(output.clone())}else{ok(output.clone())};
         response.structured_content=Some(json!({
             "output":output,
@@ -345,6 +344,24 @@ impl CodingTools {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn unicode_truncation_never_splits_a_character(){
+        let s=format!("{}😀 after", "a".repeat(49_999));
+        let cut=cut(s);
+        assert!(cut.ends_with("[Output truncated at 50 KB; use offset/limit or narrower search.]"));
+        assert!(cut.starts_with(&"a".repeat(49_999)));
+        assert_eq!(shorten_line("a😀b",2),"a");
+    }
+    #[test] fn file_size_caps_have_sane_bounds(){
+        assert!(MAX_GREP_BYTES>=MAX_FILE_BYTES);
+        assert!(MAX_OUTPUT_BYTES<MAX_FILE_BYTES as usize);
+        assert_eq!(MAX_GREP_FILES,20_000);
+    }
+    #[test] fn process_limit_is_shared_by_sessions(){
+        let a=CodingTools::new(PathBuf::from("/tmp"));
+        let b=CodingTools::new(PathBuf::from("/tmp"));
+        assert!(Arc::ptr_eq(&a.process_limit,&b.process_limit));
+        assert_eq!(a.process_limit.available_permits(),16);
+    }
     #[test] fn edit_checks_unique_and_overlap(){
         let d=std::env::temp_dir().join(format!("ai-local-hub-test-{}",uuid::Uuid::new_v4()));
         fs::create_dir_all(&d).unwrap();fs::write(d.join("x.txt"),"alpha beta gamma").unwrap();

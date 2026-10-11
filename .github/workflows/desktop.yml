@@ -80,6 +80,9 @@ jobs:
           releaseDraft: true
           prerelease: false
 
+      - name: Check native DMG integrity
+        run: node scripts/verify-desktop-build.mjs --target ${{ matrix.target }}
+
       - uses: actions/upload-artifact@v4
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:

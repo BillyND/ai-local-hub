@@ -66,3 +66,23 @@ The old TypeScript implementation and tests remain as a reference during the tra
 ### Rollback
 
 Existing user config was not reset. Since the old JS source and lockfile are retained, the original manager can still be rebuilt and run from the original sources if necessary. The migration deliberately does not automatically start/stop existing live manager processes.
+
+## Native reliability hardening (11 October 2026, second audit)
+
+Implemented:
+- Shell replies now include a structured `output` field, `exit_code`, `timed_out`, wall time and an accurate truncation flag. Output is drained with bounded buffers. A Unix request cancellation kills its process group.
+- A worker-wide, shared 16-command semaphore bounds shell concurrency. Shell subprocess PATH is extended with conventional macOS development paths when launched from a GUI session.
+- Text/image read and edit/write are limited to 32 MiB per file. Grep has a 64 MiB total scan budget, maximum 20,000 files, and capped matching-line output to avoid unbounded result memory.
+- Atomic edit follows existing symlink targets and uses randomized sibling temp-file names.
+- MCP Host validation checks the exact local port, and the worker's shutdown uses a broadcast watch channel. Failed tunnel startup removes its runtime profile.
+- Instance updates/deletes save a copy before mutating in-memory state, keeping the manager coherent if disk saving fails.
+- The macOS release binary is stripped using Apple's native utility rather than relying on the local rust-objcopy installation.
+- Integration tests now exercise errors, truncation, timeout, symlinks, multiple workers and failed saves. Rust unit tests expanded from 2 to 8.
+- Packaging validation checks all three native binaries and verifies that a final DMG exists and has a valid checksum.
+
+Still **not** guaranteed:
+- The app provides full shell/filesystem access by design; workspace is not a security boundary. A sandbox/permission engine is a separate feature.
+- Native `rmcp` session quotas, idle sweeps and Pi SDK-compatible streaming/progress/image resizing have not reached full legacy parity.
+- App installation / self-update / signing / notarization, remote tunnel end-to-end for the *latest* build, x86 macOS, Windows and Linux need platform-specific validation.
+- A numeric 100% line/branch code-coverage claim would be misleading without an instrumented coverage measurement and comprehensive platform tests.
+- The current source fixes are not automatically deployed to the already-running /Applications app. Do not overwrite a running MCP process during an active ChatGPT session.
