@@ -1,6 +1,6 @@
 {
   "name": "ai-local-hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Local MCP tools for AI clients, with room for skills and extensions",
   "type": "module",
