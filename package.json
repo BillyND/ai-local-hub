@@ -13,7 +13,7 @@
     "build:rust": "node scripts/native-build.mjs",
     "build:server": "npm run build:rust",
     "start": "node scripts/start-native.mjs",
-    "dev": "npm run build:rust && npm start --",
+    "dev": "npm run build:dev && node scripts/start-native.mjs --debug --dev-config --port 0",
     "dev:web": "npm --prefix web run dev",
     "test": "npm run test:rust",
     "test:rust": "node scripts/native-build.mjs --debug && node rust/runtime/tests/mcp-smoke.mjs && node rust/runtime/tests/hardening-smoke.mjs && node rust/runtime/tests/manager-smoke.mjs && node scripts/test-cargo.mjs",
@@ -22,7 +22,9 @@
     "benchmark:legacy": "node scripts/benchmark.mjs",
     "desktop:setup": "npm --prefix desktop install --no-audit --no-fund",
     "desktop:dev": "npm run build && npm --prefix desktop run dev",
-    "desktop:build": "npm run build && npm --prefix desktop run build"
+    "desktop:build": "npm run build && npm --prefix desktop run build",
+    "build:rust:dev": "node scripts/native-build.mjs --debug",
+    "build:dev": "npm run build:rust:dev && npm --prefix web run build"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.1.0",
