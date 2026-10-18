@@ -26,3 +26,4 @@ rust/vendor/omp/*/Cargo.lock
 # git worktrees
 /worktrees/
 .claude/worktrees/
+.pi
