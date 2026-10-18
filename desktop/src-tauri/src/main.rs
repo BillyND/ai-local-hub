@@ -4,6 +4,7 @@
 mod manager;
 #[cfg(any(target_os = "macos", windows))]
 mod tray;
+mod updater;
 
 use manager::ManagerHost;
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
@@ -27,11 +28,20 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main(app)
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
+        .invoke_handler(tauri::generate_handler![
+            updater::update_state,
+            updater::set_auto_install,
+            updater::install_update
+        ])
         .setup(|app| {
             #[cfg(any(target_os = "macos", windows))]
             if let Err(error) = tray::create(app.handle()) {
                 eprintln!("tray icon unavailable: {error}");
             }
+            // Before the manager starts: it reads the instances to resume after an update.
+            updater::init(app.handle());
             manager::start(app.handle().clone());
             Ok(())
         })

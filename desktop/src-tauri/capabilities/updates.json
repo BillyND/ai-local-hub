@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "updates",
+  "description": "The manager UI on loopback may read the desktop update state, toggle automatic installs and start an install. Nothing else is exposed.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*"] },
+  "permissions": [
+    "allow-update-state",
+    "allow-set-auto-install",
+    "allow-install-update",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

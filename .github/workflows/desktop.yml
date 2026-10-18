@@ -63,23 +63,35 @@ jobs:
           - name: macos-aarch64
             platform: macos-latest
             target: aarch64-apple-darwin
-            artifact_glob: desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/**/*.dmg
+            updater_arch: aarch64
+            artifact_glob: |
+              desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/**/*.dmg
+              desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+              desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           - name: macos-x64
             platform: macos-latest
             target: x86_64-apple-darwin
-            artifact_glob: desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/**/*.dmg
+            updater_arch: x64
+            artifact_glob: |
+              desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/**/*.dmg
+              desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
+              desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           - name: windows-x64
             platform: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_glob: |
               desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.msi
+              desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.msi.sig
               desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.exe
+              desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.exe.sig
           - name: linux-x64
             platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             artifact_glob: |
               desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/**/*.AppImage
+              desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/**/*.AppImage.sig
               desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/**/*.deb
+              desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/**/*.deb.sig
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -122,8 +134,25 @@ jobs:
         run: npm --prefix desktop ci --ignore-scripts
       - name: Stage native Rust manager, worker and React assets
         run: node scripts/stage-rust-desktop.mjs --target ${{ matrix.target }}
-      - name: Build native installers
-        run: node scripts/tauri-build.mjs build --target ${{ matrix.target }}
+      - name: Build native app
+        run: node scripts/tauri-build.mjs build --no-bundle --target ${{ matrix.target }}
+      - name: Package installers and signed update packages
+        # Packaging runs no build scripts, so the updater key never reaches dependency code. The
+        # updater config adds a `.sig` next to each update package; the public key in
+        # tauri.conf.json must match this private key or installed apps reject the update.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/tauri-build.mjs bundle --target ${{ matrix.target }} --config src-tauri/tauri.updater.conf.json
+      - name: Name the macOS update package per architecture
+        # Both macOS builds produce AI_Local_Hub.app.tar.gz; the release needs one of each.
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          dir="desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos"
+          name="AI_Local_Hub_$(node -p "require('./package.json').version")_${{ matrix.updater_arch }}.app.tar.gz"
+          mv "$dir/AI_Local_Hub.app.tar.gz" "$dir/$name"
+          mv "$dir/AI_Local_Hub.app.tar.gz.sig" "$dir/$name.sig"
       - name: Check native bundle integrity
         run: node scripts/verify-desktop-build.mjs --target ${{ matrix.target }}
 
@@ -144,6 +173,14 @@ jobs:
           path: release-assets
           pattern: ai-local-hub-installer-*
           merge-multiple: true
+      - name: Write the updater manifest
+        run: |
+          node scripts/updater-manifest.mjs \
+            --assets release-assets \
+            --tag "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --notes "docs/releases/${GITHUB_REF_NAME}.md" \
+            --out release-assets/latest.json
       - name: Create GitHub release and upload installers
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

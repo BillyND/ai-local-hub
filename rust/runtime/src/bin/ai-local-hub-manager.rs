@@ -100,7 +100,7 @@ async fn run()->Result<()>{
     }
     let token=token();
     let shutdown=Arc::new(Notify::new());
-    let (port,server)=manager_http::listen(Arc::clone(&manager),resolve_web()?,token.clone(),port,strict,Arc::clone(&shutdown)).await?;
+    let (port,server)=manager_http::listen(Arc::clone(&manager),resolve_web()?,token.clone(),port,strict,desktop,Arc::clone(&shutdown)).await?;
     let url=format!("http://127.0.0.1:{port}/");
     let lock_path=config_path.parent().context("Invalid config path")?.join("manager.lock");
     let ours=Lock{pid:std::process::id(),url:url.clone(),token:token.clone()};
@@ -124,6 +124,15 @@ async fn run()->Result<()>{
             loop{match stdin.read(&mut data).await{Ok(0)|Err(_)=>break,_=>{}}}
             close.notify_one();
         });
+        // The desktop app passes the instances that were running before it restarted to install
+        // an update; names that no longer exist are skipped.
+        if !names.is_empty(){
+            let resume=Arc::clone(&manager);
+            tokio::spawn(async move{
+                let instances=resume.config.lock().await.instances.clone();
+                for inst in instances{if names.contains(&inst.name.to_lowercase()){resume.start(inst).await;}}
+            });
+        }
     }else{
         println!("AI Local Hub Rust manager running.\nOpen: {link}\nPress Ctrl+C to stop.");
         if open{open_url(&link);}

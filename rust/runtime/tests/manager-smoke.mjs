@@ -32,6 +32,8 @@ try {
  const base=new URL(link).origin;
  let r=await fetch(base+"/api/state",{redirect:"manual"});assert.equal(r.status,401);
  r=await fetch(link,{redirect:"manual"});assert.equal(r.status,302);
+ // Only the desktop app may reach Tauri's IPC endpoint.
+ assert.match(r.headers.get("content-security-policy"),/connect-src 'self';/);
  const cookie=r.headers.get("set-cookie").split(";")[0];
  assert.ok(cookie.startsWith("wtm_session="));
  async function api(method,path,body){

@@ -12,7 +12,9 @@ import { SecurityNote } from '@/components/security-note'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { UpdateBanner } from '@/components/update-banner'
 import { useManagerStore } from '@/stores/manager-store'
+import { useUpdateStore } from '@/stores/update-store'
 
 function Loading() {
   return (
@@ -29,6 +31,7 @@ function Dashboard() {
     <TooltipProvider>
       <div className="mx-auto flex min-h-dvh min-w-0 max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6 lg:h-dvh lg:overflow-hidden">
         <AppHeader />
+        <UpdateBanner />
         <SecurityNote />
         <main className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-6 lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] lg:items-stretch">
           <section aria-label="Instances" className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
@@ -53,6 +56,7 @@ export default function App() {
     useShallow((s) => ({ expired: s.expired, stopped: s.stopped, loaded: s.loaded, loadError: s.loadError })),
   )
   useEffect(() => useManagerStore.getState().connect(), [])
+  useEffect(() => useUpdateStore.getState().connect(), [])
 
   if (expired) {
     return <FullPageState icon={<LockKeyholeIcon />} title="Session expired">Session expired — reopen the link printed in the terminal.</FullPageState>

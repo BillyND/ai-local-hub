@@ -10,14 +10,18 @@ use axum::{
 };
 use serde_json::{json,Value};
 use std::{path::{Path,PathBuf},sync::Arc,time::Duration};
-use tokio::{net::TcpListener,sync::Notify};
+use tokio::{net::TcpListener,sync::{watch,Notify}};
 #[derive(Clone)]
 struct AppState {
     manager:Arc<RuntimeManager>,
     web_dir:PathBuf,
     token:String,
     port:u16,
+    desktop:bool,
     shutdown:Arc<Notify>,
+    /// Turns true when shutdown starts so open event streams end; graceful shutdown waits for
+    /// every connection, and the UI keeps one stream open for as long as it is shown.
+    closing:watch::Receiver<bool>,
 }
 fn err(status:StatusCode,message:impl Into<String>)->Response{(status,Json(json!({"error":message.into()}))).into_response()}
 fn allowed_host(headers:&HeaderMap,port:u16)->bool{
@@ -37,16 +41,21 @@ fn origin_ok(headers:&HeaderMap,port:u16)->bool{
     let o=headers.get(ORIGIN).and_then(|v|v.to_str().ok()).unwrap_or("").to_ascii_lowercase();
     o==format!("http://127.0.0.1:{port}")||o==format!("http://localhost:{port}")||o==format!("http://[::1]:{port}")
 }
-fn secure(mut res:Response)->Response {
+const CSP:&str="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+/// Inside the desktop app the UI also talks to the Tauri shell (update controls); Tauri's IPC
+/// endpoint is `ipc://localhost` on macOS/Linux and `http://ipc.localhost` on Windows.
+const CSP_DESKTOP:&str="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+fn secure(mut res:Response,desktop:bool)->Response {
     let headers=res.headers_mut();
-    headers.insert("content-security-policy",HeaderValue::from_static("default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"));
+    headers.insert("content-security-policy",HeaderValue::from_static(if desktop{CSP_DESKTOP}else{CSP}));
     headers.insert("x-content-type-options",HeaderValue::from_static("nosniff"));
     headers.insert("x-frame-options",HeaderValue::from_static("DENY"));
     headers.insert("referrer-policy",HeaderValue::from_static("no-referrer"));
     res
 }
 async fn app(State(state):State<AppState>, request:Request<Body>)->Response{
-    secure(dispatch(state,request).await)
+    let desktop=state.desktop;
+    secure(dispatch(state,request).await,desktop)
 }
 async fn dispatch(state:AppState,request:Request<Body>)->Response{
     if !allowed_host(request.headers(),state.port){return err(StatusCode::FORBIDDEN,"Forbidden host.");}
@@ -99,9 +108,14 @@ async fn api(state:AppState,req:Request<Body>)->Response{
     }
     if method==Method::GET && kind=="events" && id.is_none(){
         let mut rx=mgr.subscribe();
+        let mut closing=state.closing.clone();
         let events=stream!{
             loop {
-                match rx.recv().await {
+                let received=tokio::select!{
+                    _=closing.wait_for(|closed|*closed)=>break,
+                    received=rx.recv()=>received,
+                };
+                match received {
                     Ok(data)=>yield Ok::<Event,std::convert::Infallible>(Event::default().data(data)),
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>continue,
                     Err(_) => break,
@@ -210,15 +224,16 @@ async fn static_file(root:&Path,path:&str,head:bool)->Response{
     res.headers_mut().insert("cache-control",HeaderValue::from_static(cache));
     res
 }
-pub async fn listen(manager:Arc<RuntimeManager>,web_dir:PathBuf,token:String,preferred:u16,strict:bool,shutdown:Arc<Notify>)->Result<(u16,impl std::future::Future<Output=Result<()>>)>{
+pub async fn listen(manager:Arc<RuntimeManager>,web_dir:PathBuf,token:String,preferred:u16,strict:bool,desktop:bool,shutdown:Arc<Notify>)->Result<(u16,impl std::future::Future<Output=Result<()>>)>{
     let listener=match TcpListener::bind(("127.0.0.1",preferred)).await{
         Ok(l)=>l,Err(_error)if !strict=>TcpListener::bind(("127.0.0.1",0)).await?,Err(e)=>return Err(e.into())};
     let port=listener.local_addr()?.port();
-    let state=AppState{manager,web_dir,token,port,shutdown:Arc::clone(&shutdown)};
+    let (close_streams,closing)=watch::channel(false);
+    let state=AppState{manager,web_dir,token,port,desktop,shutdown:Arc::clone(&shutdown),closing};
     let app=Router::new().fallback(any(app)).with_state(state);
     let future=async move {
         axum::serve(listener,app)
-            .with_graceful_shutdown(async move {shutdown.notified().await;})
+            .with_graceful_shutdown(async move {shutdown.notified().await;let _=close_streams.send(true);})
             .await.context("HTTP server failed")
     };
     Ok((port,future))

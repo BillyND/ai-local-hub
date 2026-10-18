@@ -1,0 +1,1 @@
+- [Updater signing and release versions](reference_updater_signing.md) — updater key location, tag must equal package.json version, plugin source path

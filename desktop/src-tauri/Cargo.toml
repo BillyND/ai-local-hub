@@ -10,8 +10,13 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-notification = "2"
+# Already pulled in by the updater; used to read which instances are running before an update.
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 
 # The tray icon is macOS/Windows only: GNOME has no tray and Linux tray click events are not
 # delivered, so Linux quits when the window closes and avoids the appindicator runtime dependency.

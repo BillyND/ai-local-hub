@@ -26,6 +26,11 @@ const ATTACH_PROBE_FAILURES: u32 = 2;
 pub struct ManagerHost {
     child: Mutex<Option<Child>>,
     stopping: AtomicBool,
+    /// UI address of the manager this app started, including its session token. Empty while
+    /// starting and when attached to a manager started elsewhere.
+    endpoint: Mutex<Option<Url>>,
+    /// The bundled page the window opens on; it renders startup failures.
+    splash: Option<Url>,
 }
 
 impl ManagerHost {
@@ -50,6 +55,63 @@ impl ManagerHost {
         let _ = child.kill();
         let _ = child.wait();
     }
+
+    /// True once [`ManagerHost::shutdown`] ran (until [`restart`]).
+    pub fn is_stopped(&self) -> bool {
+        self.stopping.load(Ordering::SeqCst)
+    }
+
+    /// Names of the instances that are running or starting in the manager this app owns.
+    pub async fn running_instances(&self) -> Vec<String> {
+        let Some(url) = self.endpoint.lock().unwrap_or_else(|e| e.into_inner()).clone() else {
+            return Vec::new();
+        };
+        match fetch_running(url).await {
+            Ok(names) => names,
+            Err(error) => {
+                eprintln!("cannot read running instances: {error}");
+                Vec::new()
+            }
+        }
+    }
+}
+
+/// Reads `/api/state` with the session token the manager printed in its ready line.
+async fn fetch_running(url: Url) -> Result<Vec<String>, String> {
+    let token = url
+        .query_pairs()
+        .find(|(key, _)| key == "token")
+        .map(|(_, value)| value.into_owned())
+        .ok_or("the manager address has no session token")?;
+    let mut api = url;
+    api.set_query(None);
+    api.set_path("/api/state");
+    let state: serde_json::Value = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(api)
+        .header("Cookie", format!("wtm_session={token}"))
+        .send()
+        .await
+        .and_then(|response| response.error_for_status())
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(state["instances"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|instance| {
+            matches!(
+                instance["status"]["state"].as_str(),
+                Some("running" | "starting")
+            )
+        })
+        .filter_map(|instance| instance["name"].as_str().map(str::to_string))
+        .collect())
 }
 
 /// Collects the manager's stderr so a startup failure can show its cause.
@@ -143,12 +205,29 @@ fn watch_external(app: AppHandle, url: &Url) {
 
 /// Starts the manager on a background thread and points the window at it once it is ready.
 pub fn start(app: AppHandle) {
-    app.manage(ManagerHost::default());
     let splash = app
         .get_webview_window("main")
         .and_then(|window| window.url().ok());
+    app.manage(ManagerHost {
+        splash,
+        ..Default::default()
+    });
+    spawn_run(app);
+}
+
+/// Starts the manager again after [`ManagerHost::shutdown`], for example when an update could not
+/// be installed after all; instances saved for resuming start with it.
+pub fn restart(app: &AppHandle) {
+    app.state::<ManagerHost>()
+        .stopping
+        .store(false, Ordering::SeqCst);
+    spawn_run(app.clone());
+}
+
+fn spawn_run(app: AppHandle) {
     thread::spawn(move || {
         if let Err(message) = run(&app) {
+            let splash = app.state::<ManagerHost>().splash.clone();
             show_error(&app, splash.as_ref(), &message);
         }
     });
@@ -182,8 +261,11 @@ fn run(app: &AppHandle) -> Result<(), String> {
         return Err(format!("bundled web UI is missing: {}", web_dir.display()));
     }
     let mut command = Command::new(&manager_bin);
+    command.arg("--desktop");
+    for name in crate::updater::take_resume(app) {
+        command.arg("--instance").arg(name);
+    }
     command
-        .arg("--desktop")
         .env("AI_LOCAL_HUB_RUNTIME_BIN", &worker_bin)
         .env("AI_LOCAL_HUB_WEB_DIR", &web_dir)
         .current_dir(&web_dir)
@@ -256,6 +338,10 @@ fn run(app: &AppHandle) -> Result<(), String> {
         watch_external(app.clone(), &url);
         return Ok(());
     }
+    host.endpoint
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .replace(url);
 
     // Watch the manager: a clean exit means Quit was chosen in the UI, anything else is a crash.
     loop {

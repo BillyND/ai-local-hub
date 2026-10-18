@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-auto-install"
+description = "Enables the set_auto_install command without any pre-configured scope."
+commands.allow = ["set_auto_install"]
+
+[[permission]]
+identifier = "deny-set-auto-install"
+description = "Denies the set_auto_install command without any pre-configured scope."
+commands.deny = ["set_auto_install"]

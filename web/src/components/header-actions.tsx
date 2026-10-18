@@ -2,6 +2,7 @@ import { PlayIcon, PlusIcon, PowerIcon, SquareIcon } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/theme-toggle'
+import { UpdateMenu } from '@/components/update-menu'
 import { startAll, stopAll } from '@/stores/actions'
 import { useManagerStore } from '@/stores/manager-store'
 import { useUiStore } from '@/stores/ui-store'
@@ -16,6 +17,7 @@ export function HeaderActions() {
       <Button onClick={openAdd}><PlusIcon />Add instance</Button>
       <Button variant="outline" onClick={startAll} disabled={none || bulkBusy}><PlayIcon />Start all</Button>
       <Button variant="outline" onClick={stopAll} disabled={none || bulkBusy}><SquareIcon />Stop all</Button>
+      <UpdateMenu />
       <ThemeToggle />
       <Button variant="ghost" onClick={() => setQuitOpen(true)} className="text-destructive hover:text-destructive">
         <PowerIcon />Quit

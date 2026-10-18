@@ -22,3 +22,7 @@ desktop/src-tauri/resources/
 
 rust/vendor/omp/*/target/
 rust/vendor/omp/*/Cargo.lock
+
+# git worktrees
+/worktrees/
+.claude/worktrees/

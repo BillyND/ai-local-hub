@@ -44,6 +44,17 @@ Desktop packaging assets are staged by `scripts/stage-rust-desktop.mjs` and buil
 
 The app reuses the existing manager lock when one is already running. On macOS and Windows, closing the window hides it while the manager continues under the tray/menu-bar icon; **Quit** stops workers and tunnels. A desktop-launched manager also observes stdin EOF so it does not outlive the desktop host.
 
+### Automatic updates
+
+The desktop app checks the latest GitHub release 10 seconds after launch and every 6 hours after that, then shows a system notification and an in-app banner when a newer version exists. The **Updates** button in the header shows the installed version and the **Install updates automatically** switch (on by default):
+
+- **On:** the app downloads the update, verifies its signature, installs it and restarts by itself.
+- **Off:** nothing installs until **Update and restart** is clicked in the banner.
+
+Instances that were running or starting before an update restart start again in the new version. A failed download or install shows in the banner with **Try again** and leaves the current version running; that version is not retried automatically until the app restarts. Version 0.4.8 and older have no updater, so install the first version that has it by hand. On Linux, AppImage and DEB installs both update (DEB asks for an administrator password through `pkexec`). The UI served to a regular browser (`npm start`) has no update controls.
+
+Releases are signed for the updater by `.github/workflows/desktop.yml`: the `bundle` job compiles without the key, then packages with `desktop/src-tauri/tauri.updater.conf.json` and the `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, and the `release` job publishes `latest.json` (written by `scripts/updater-manifest.mjs`, which fails unless the tag is `v` plus the `package.json` version). The public key in `desktop/src-tauri/tauri.conf.json` must match that private key: if the private key is lost, installed apps cannot accept any later update. Local builds do not create update packages and need no key.
+
 ## Connecting ChatGPT
 
 1. In [OpenAI Tunnel settings](https://platform.openai.com/settings/organization/tunnels), create or select a tunnel for your target ChatGPT workspace.
