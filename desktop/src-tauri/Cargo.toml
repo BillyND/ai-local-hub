@@ -1,6 +1,6 @@
 [package]
 name = "ai-local-hub-desktop"
-version = "0.4.8"
+version = "0.5.0"
 description = "Desktop shell for AI Local Hub"
 edition = "2021"
 rust-version = "1.80"
