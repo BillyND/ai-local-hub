@@ -31,6 +31,18 @@ pub struct ManagerHost {
     endpoint: Mutex<Option<Url>>,
     /// The bundled page the window opens on; it renders startup failures.
     splash: Option<Url>,
+    /// Set once the manager this app owned has been stopped for good (until [`restart`]).
+    stopped: AtomicBool,
+}
+
+/// What a quit request has to do before the app may exit.
+pub enum Quit {
+    /// Nothing left to stop.
+    Now,
+    /// Stop this manager first (off the UI thread), then exit.
+    After(Child),
+    /// A stop is already running; keep the app alive until it finishes.
+    Pending,
 }
 
 impl ManagerHost {
@@ -38,22 +50,57 @@ impl ManagerHost {
         self.child.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Closes the manager's stdin, which asks it to stop its workers and exit; kills it if it
-    /// does not finish in time. Closing stdin also covers the shell dying, so no orphans remain.
-    pub fn shutdown(&self) {
-        self.stopping.store(true, Ordering::SeqCst);
-        let mut guard = self.child();
-        let Some(child) = guard.as_mut() else { return };
+    /// Called for every exit request. The first one takes the running manager so the caller can stop it
+    /// in the background; later ones wait for that stop to finish.
+    pub fn begin_quit(&self) -> Quit {
+        if self.stopped.load(Ordering::SeqCst) {
+            return Quit::Now;
+        }
+        if self.stopping.swap(true, Ordering::SeqCst) {
+            return Quit::Pending;
+        }
+        let running = self
+            .child()
+            .take()
+            .and_then(|mut child| matches!(child.try_wait(), Ok(None)).then_some(child));
+        match running {
+            Some(child) => Quit::After(child),
+            None => {
+                self.stopped.store(true, Ordering::SeqCst);
+                Quit::Now
+            }
+        }
+    }
+
+    /// Closes the manager's stdin, which asks it to stop its workers and exit; kills it if it does not
+    /// finish in time. Blocks, so it must not run on the UI thread.
+    pub fn stop(&self, mut child: Child) {
         drop(child.stdin.take());
         let deadline = Instant::now() + STOP_TIMEOUT;
         while Instant::now() < deadline {
             match child.try_wait() {
-                Ok(Some(_)) | Err(_) => return,
+                Ok(Some(_)) | Err(_) => break,
                 Ok(None) => thread::sleep(Duration::from_millis(100)),
             }
         }
-        let _ = child.kill();
-        let _ = child.wait();
+        if matches!(child.try_wait(), Ok(None)) {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+
+    /// Stops the manager this app still owns and waits for it (see [`ManagerHost::stop`]). Runs where the
+    /// exit cannot be deferred: macOS Cmd+Q / Dock Quit / logout (straight to `RunEvent::Exit`), an
+    /// update restart, and the Windows installer hand-off. The manager exits within a few seconds, so
+    /// the wait is short; it is bounded by the kill after `STOP_TIMEOUT`.
+    pub fn shutdown(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
+        let child = self.child().take();
+        match child {
+            Some(child) => self.stop(child),
+            None => self.stopped.store(true, Ordering::SeqCst),
+        }
     }
 
     /// True once [`ManagerHost::shutdown`] ran (until [`restart`]).
@@ -218,9 +265,9 @@ pub fn start(app: AppHandle) {
 /// Starts the manager again after [`ManagerHost::shutdown`], for example when an update could not
 /// be installed after all; instances saved for resuming start with it.
 pub fn restart(app: &AppHandle) {
-    app.state::<ManagerHost>()
-        .stopping
-        .store(false, Ordering::SeqCst);
+    let host = app.state::<ManagerHost>();
+    host.stopping.store(false, Ordering::SeqCst);
+    host.stopped.store(false, Ordering::SeqCst);
     spawn_run(app.clone());
 }
 

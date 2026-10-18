@@ -6,8 +6,8 @@ mod manager;
 mod tray;
 mod updater;
 
-use manager::ManagerHost;
-use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+use manager::{ManagerHost, Quit};
+use tauri::{AppHandle, Manager, RunEvent, WindowEvent, RESTART_EXIT_CODE};
 
 /// Closing the window keeps the instances running in the background on macOS (reopen from the
 /// Dock or menu bar) and Windows (tray). Linux has no dependable tray, so closing quits.
@@ -56,8 +56,35 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building the application")
         .run(|app, event| match event {
-            // Runs on every quit path (tray, UI Quit button, OS shutdown): stop the manager and
-            // its workers before the process goes away.
+            // Quits that ask first (tray, UI Quit button, last window closed on Linux): stopping the
+            // manager and its workers can take seconds, so it runs on a background thread with the
+            // windows hidden, and the app exits once it is done; the UI thread never blocks on it.
+            // An update restart cannot be deferred, so `RunEvent::Exit` stops the manager instead.
+            RunEvent::ExitRequested { api, code, .. } => {
+                if code == Some(RESTART_EXIT_CODE) {
+                    return;
+                }
+                let Some(host) = app.try_state::<ManagerHost>() else { return };
+                match host.begin_quit() {
+                    Quit::Now => {}
+                    Quit::Pending => api.prevent_exit(),
+                    Quit::After(child) => {
+                        api.prevent_exit();
+                        for window in app.webview_windows().values() {
+                            let _ = window.hide();
+                        }
+                        let app = app.clone();
+                        std::thread::spawn(move || {
+                            if let Some(host) = app.try_state::<ManagerHost>() {
+                                host.stop(child);
+                            }
+                            app.exit(0);
+                        });
+                    }
+                }
+            }
+            // Exits that skip `ExitRequested` (macOS Cmd+Q, Dock Quit, logout; update restarts): stop
+            // the manager before the process goes away. A no-op once a background stop finished.
             RunEvent::Exit => {
                 if let Some(host) = app.try_state::<ManagerHost>() {
                     host.shutdown();
