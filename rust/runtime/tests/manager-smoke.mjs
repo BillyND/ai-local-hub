@@ -21,7 +21,9 @@ child.stdout.on("data",chunk=>{
   const link=out.match(/Open: (http:\/\/127\.0\.0\.1:\d+\/\?token=[0-9a-f]+)/)?.[1];
   if(link)fulfill(link);
 });
-child.on("exit",code=>reject(new Error("Manager exited "+code+" "+err+" "+out)));
+child.once("exit",code=>reject(new Error("Manager exited "+code+" "+err+" "+out)));
+let jobPid=0;
+const alive=pid=>{try{process.kill(pid,0);return true}catch{return false}};
 const waitFor=async(predicate,message)=>{
   const until=Date.now()+12000;
   while(Date.now()<until){const v=await predicate();if(v)return v;await new Promise(r=>setTimeout(r,100));}
@@ -84,6 +86,11 @@ try {
    const w=await client.callTool({name:"write",arguments:{path:"native.txt",content:"rust worker"}});
    assert.notEqual(w.isError,true);
    assert.equal(await readFile(join(root,"native.txt"),"utf8"),"rust worker");
+   // A `timeout: 0` background job (dev server, watcher) must not outlive its instance.
+   const job=await client.callTool({name:"bash",arguments:{command:"echo $$ > job.pid; exec sleep 300",timeout:0,async:true}});
+   assert.notEqual(job.isError,true,JSON.stringify(job));
+   jobPid=Number(await waitFor(async()=>{try{return (await readFile(join(root,"job.pid"),"utf8")).trim()||null}catch{return null}},"background job pid"));
+   assert.ok(alive(jobPid),"background job is running");
  } finally{await client.close();}
  // Two instances must remain independently accessible and stoppable.
  const otherRoot=join(root,"second");await mkdir(otherRoot);
@@ -119,16 +126,25 @@ try{
  assert.ok(!Number.isNaN(Date.parse(toolLog.time)),"ISO time");
  assert.equal((await api("POST",`/instances/${id}/stop`,{})).status,200);
  await waitFor(async()=>(await api("GET","/state")).data.instances.find(i=>i.id===id).status.state==="stopped","stop first worker");
+ await waitFor(async()=>!alive(jobPid),"background job stopped with its instance");
  assert.equal((await api("GET","/state")).data.instances.find(i=>i.id===secondId).status.state,"running");
  assert.equal((await api("POST",`/instances/${secondId}/stop`,{})).status,200);
  await waitFor(async()=>(await api("GET","/state")).data.instances.find(i=>i.id===secondId).status.state==="stopped","stop second worker");
  assert.equal((await api("DELETE",`/instances/${secondId}`)).status,204);
  assert.equal((await api("DELETE",`/instances/${id}`)).status,204);
  assert.equal((await api("GET","/state")).data.instances.length,0);
+ // An open UI event stream must not hold the manager after Quit.
+ const events=await fetch(base+"/api/events",{headers:{cookie}});
+ assert.equal(events.status,200);
+ const exited=new Promise(r=>child.once("exit",code=>r(code)));
  assert.equal((await api("POST","/shutdown",{})).status,202);
+ const code=await Promise.race([exited,new Promise(r=>setTimeout(()=>r("hung"),8000))]);
+ assert.equal(code,0,"manager exits after Quit while the UI is connected");
+ await events.body?.cancel().catch(()=>{});
  console.log("Rust native full-stack manager integration: PASS",base);
 }finally{
  child.stdin.end();
- await Promise.race([new Promise(r=>child.once("exit",r)),new Promise(r=>setTimeout(()=>{child.kill("SIGKILL");r();},7000))]);
+ if(child.exitCode===null&&child.signalCode===null)await Promise.race([new Promise(r=>child.once("exit",r)),new Promise(r=>setTimeout(()=>{child.kill("SIGKILL");r();},7000))]);
+ if(jobPid&&alive(jobPid))process.kill(jobPid,"SIGKILL");
  await rm(root,{recursive:true,force:true});
 }

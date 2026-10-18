@@ -1,5 +1,5 @@
 //! The `lsp` actions that are not a single position query: status, diagnostics, rename_file, capabilities, request, reload.
-use super::{lsp_client::{file_to_uri, uri_to_file, Client}, lsp_config::{self, ServerConfig}, lsp_edits, lsp_format as fmt, lsp_position::resolve_symbol_column, lsp_tool::{Ctx, Input}, lsp_workspace, search_paths::{format_rel_cwd, resolve_to_cwd}, search_walk};
+use super::{cancel, lsp_client::{file_to_uri, uri_to_file, Client}, lsp_config::{self, ServerConfig}, lsp_edits, lsp_format as fmt, lsp_position::resolve_symbol_column, lsp_tool::{Ctx, Input}, lsp_workspace, search_paths::{format_rel_cwd, resolve_to_cwd}, search_walk};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::{Path, PathBuf}, sync::Arc, time::Duration};
 
@@ -10,10 +10,11 @@ fn set_server(ctx: &Ctx, name: &str) { *ctx.server.lock().unwrap_or_else(|e| e.i
 const MAX_GLOB_TARGETS: usize = 20;
 const MAX_RENAME_PAIRS: usize = 1000;
 const WORKSPACE_SYMBOL_LIMIT: usize = 200;
+const GLOB_WALK_BUDGET: Duration = Duration::from_secs(30);
 
 pub async fn status(ctx: &Ctx, servers: &[ServerConfig]) -> Out {
     if servers.is_empty() { return ok("No language servers configured for this project"); }
-    let active = ctx.pool.active().await;
+    let active = ctx.pool.active(&ctx.root).await;
     let labelled: Vec<String> = servers.iter().map(|s| match active.iter().find(|(n, _)| *n == s.command) { Some((_, st)) => format!("{} ({st})", s.name), None => format!("{} (configured, not started)", s.name) }).collect();
     ok(format!("Language servers: {}\n  note: 'configured, not started' means the binary resolves on PATH but no request has spawned it yet; 'ready' means a client process is live for this cwd.", labelled.join(", ")))
 }
@@ -33,9 +34,16 @@ pub async fn diagnostics(ctx: &Ctx, servers: &[ServerConfig], input: &Input, sec
     }
     let (mut targets, mut truncated) = (vec![file.to_string()], false);
     if super::search_paths::has_glob(file) && !resolve_to_cwd(file, &ctx.root).is_file() {
-        let found = search_walk::walk(&ctx.root, Some(file), search_walk::Opts { hidden: false, gitignore: false, include_dirs: false, bare_glob: false })?;
+        // Walk only the glob's literal directory (`src/**/*.rs` never enters `target/`), off the async
+        // workers, and stop one match past the cap.
+        let (base, glob) = super::search_paths::parse_search_path(file);
+        let base = resolve_to_cwd(&base, &ctx.root);
+        let opts = search_walk::Opts { hidden: false, gitignore: false, include_dirs: false, bare_glob: false };
+        let found = if base.is_dir() {
+            cancel::run_blocking(ctx.cancel.clone(), GLOB_WALK_BUDGET, move || search_walk::walk_first(&base, glob.as_deref(), opts, MAX_GLOB_TARGETS + 1)).await??
+        } else { Vec::new() };
         truncated = found.len() > MAX_GLOB_TARGETS;
-        targets = found.into_iter().take(MAX_GLOB_TARGETS).map(|e| e.rel).collect();
+        targets = found.into_iter().take(MAX_GLOB_TARGETS).map(|e| format_rel_cwd(&e.abs, &ctx.root, false)).collect();
         if targets.is_empty() { return ok(format!("No files matched pattern: {file}")); }
     }
     let detailed = targets.len() > 1 || truncated;
@@ -126,7 +134,7 @@ fn is_method_not_found(msg: &str) -> bool { let m = msg.to_lowercase(); m.contai
 
 pub async fn reload_workspace(ctx: &Ctx, servers: &[ServerConfig]) -> Out {
     let keep: Vec<String> = servers.iter().map(|s| s.key(&ctx.root)).collect();
-    let stopped = ctx.pool.stop_stale(&keep).await;
+    let stopped = ctx.pool.stop_stale(&ctx.root, &keep).await;
     if servers.is_empty() { return ok("No language server found for this action"); }
     let mut out: Vec<String> = Vec::new();
     if !stopped.is_empty() { out.push(format!("Stopped {} server(s) with superseded configuration: {}", stopped.len(), stopped.join(", "))); }

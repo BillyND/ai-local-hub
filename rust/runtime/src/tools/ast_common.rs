@@ -4,6 +4,8 @@ use pi_ast::{ops, SupportLang};
 use std::{collections::{BTreeSet, HashMap}, path::{Path, PathBuf}};
 
 pub const PARSE_ERRORS_LIMIT: usize = 20;
+/// Larger files (bundles, generated code) are skipped and named: one can take seconds and GBs to parse.
+pub const MAX_PARSE_BYTES: u64 = 4 * 1024 * 1024;
 
 pub struct Candidate { pub abs: PathBuf, pub display: String }
 
@@ -11,20 +13,27 @@ pub struct Resolved { pub cand: Candidate, pub lang: Option<SupportLang>, pub la
 
 pub struct Resolution { pub files: Vec<Resolved>, pub languages: HashMap<String, SupportLang>, pub missing: BTreeSet<&'static str> }
 
-/// Files under the scope's targets that ast-grep can parse, de-duplicated and sorted by display path.
-pub fn collect(scope: &Scope, cwd: &Path, lang: Option<&str>) -> Result<Vec<Candidate>, String> {
+/// Files under the scope's targets that ast-grep can parse, de-duplicated and sorted by display path,
+/// plus the display paths of supported files skipped for exceeding `MAX_PARSE_BYTES`.
+pub fn collect(scope: &Scope, cwd: &Path, lang: Option<&str>) -> Result<(Vec<Candidate>, Vec<String>), String> {
     let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
+    let (mut out, mut oversized) = (Vec::new(), Vec::new());
     for t in &scope.targets {
         let opts = search_walk::Opts { hidden: true, gitignore: true, include_dirs: false, bare_glob: t.bare };
         for e in search_walk::walk(&t.base, t.glob.as_deref(), opts)? {
             if ops::is_supported_file(&e.abs, lang) && seen.insert(e.abs.clone()) {
-                out.push(Candidate { display: format_rel_cwd(&e.abs, cwd, false), abs: e.abs });
+                let display = format_rel_cwd(&e.abs, cwd, false);
+                if e.len > MAX_PARSE_BYTES { oversized.push(display); } else { out.push(Candidate { display, abs: e.abs }); }
             }
         }
     }
     out.sort_by(|a, b| a.display.cmp(&b.display));
-    Ok(out)
+    oversized.sort();
+    Ok((out, oversized))
+}
+
+pub fn oversized_note(skipped: &[String]) -> Option<String> {
+    (!skipped.is_empty()).then(|| format!("Skipped {} larger than {} MiB (not parsed): {}", plural("file", skipped.len()), MAX_PARSE_BYTES / (1024 * 1024), skipped.join(", ")))
 }
 
 /// Resolves each file's language; languages whose grammar is not bundled are reported as missing.

@@ -1,9 +1,10 @@
 //! Directory walk with omp's search rules: gitignore, hidden files, `.git`/`node_modules` pruning, glob filter.
+use super::cancel;
 use globset::{Glob, GlobBuilder, GlobMatcher};
 use ignore::WalkBuilder;
 use std::{path::{Path, PathBuf}, time::SystemTime};
 
-pub struct Entry { pub abs: PathBuf, pub rel: String, pub is_dir: bool, pub mtime: SystemTime }
+pub struct Entry { pub abs: PathBuf, pub rel: String, pub is_dir: bool, pub mtime: SystemTime, pub len: u64 }
 
 #[derive(Clone, Copy)]
 pub struct Opts { pub hidden: bool, pub gitignore: bool, pub include_dirs: bool, pub bare_glob: bool }
@@ -17,13 +18,16 @@ pub fn build_glob(pattern: &str, recursive: bool) -> Result<GlobMatcher, String>
     GlobBuilder::new(&p).literal_separator(true).build().map(|g: Glob| g.compile_matcher()).map_err(|e| format!("Invalid glob: {e}"))
 }
 
-pub fn walk(base: &Path, glob: Option<&str>, opts: Opts) -> Result<Vec<Entry>, String> {
+pub fn walk(base: &Path, glob: Option<&str>, opts: Opts) -> Result<Vec<Entry>, String> { walk_first(base, glob, opts, usize::MAX) }
+
+/// Like `walk`, but stops once `max` entries matched (taken in walk order, then sorted).
+pub fn walk_first(base: &Path, glob: Option<&str>, opts: Opts, max: usize) -> Result<Vec<Entry>, String> {
     let matcher = glob.map(|g| build_glob(g, opts.bare_glob)).transpose()?;
     let mentions_modules = glob.is_some_and(|g| g.contains("node_modules"));
     let meta = std::fs::metadata(base).map_err(|e| format!("{}: {e}", base.display()))?;
     if meta.is_file() {
         let name = base.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        return Ok(vec![Entry { abs: base.to_path_buf(), rel: name, is_dir: false, mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH) }]);
+        return Ok(vec![Entry { abs: base.to_path_buf(), rel: name, is_dir: false, mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), len: meta.len() }]);
     }
     let root = base.to_path_buf();
     let mut builder = WalkBuilder::new(base);
@@ -36,14 +40,17 @@ pub fn walk(base: &Path, glob: Option<&str>, opts: Opts) -> Result<Vec<Entry>, S
         });
     let mut out = Vec::new();
     for item in builder.build().flatten() {
+        cancel::check()?;
+        if out.len() >= max { break; }
         if item.depth() == 0 { continue; }
         let is_dir = item.file_type().is_some_and(|t| t.is_dir());
         if is_dir && !opts.include_dirs { continue; }
         if !is_dir && !item.file_type().is_some_and(|t| t.is_file()) { continue; }
         let rel = item.path().strip_prefix(&root).unwrap_or(item.path()).to_string_lossy().replace('\\', "/");
         if matcher.as_ref().is_some_and(|m| !m.is_match(&rel)) { continue; }
-        let mtime = item.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
-        out.push(Entry { abs: item.path().to_path_buf(), rel, is_dir, mtime });
+        let meta = item.metadata().ok();
+        let mtime = meta.as_ref().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
+        out.push(Entry { abs: item.path().to_path_buf(), rel, is_dir, mtime, len: meta.map_or(0, |m| m.len()) });
     }
     out.sort_by(|a, b| a.rel.cmp(&b.rel));
     Ok(out)

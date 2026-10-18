@@ -108,8 +108,19 @@ try {
   assert.equal(await L({ action: "hover" }), "Error: file parameter required. Use `*` for workspace scope where supported.");
   assert.equal(await L({ action: "hover", file: "README.md", line: 1 }), "No language server found for this action");
   assert.equal(await L({ action: "bogus" }), "Unknown action: bogus");
-  // ending the MCP session stops the language server it started
-  assert.equal(spawnSync("pgrep", ["-f", `${fake} `]).status === 0 || spawnSync("pgrep", ["-f", fake]).status === 0, true, "server running before the session ends");
+  // a concurrent session reuses the running server instead of starting (and indexing with) a second one
+  const servers = () => spawnSync("pgrep", ["-f", fake], { encoding: "utf8" }).stdout.split("\n").filter(Boolean).length;
+  assert.equal(servers(), 1, "one server before the second session");
+  const other = new Client({ name: "omp-lsp-tools-second", version: "1.0" });
+  const otherTransport = new StreamableHTTPClientTransport(new URL(url));
+  await other.connect(otherTransport);
+  assert.equal(text(await other.callTool({ name: "lsp", arguments: { action: "diagnostics", file: "tools.fk" } })), "OK");
+  assert.equal(servers(), 1, "the second session shares the server");
+  await otherTransport.terminateSession();
+  await other.close();
+  await new Promise(r => setTimeout(r, 500));
+  assert.equal(servers(), 1, "the server outlives a session while another one is open");
+  // ending the last MCP session stops the language server
   await transport.terminateSession();
   let alive = true;
   for (let i = 0; i < 30 && alive; i++) { await new Promise(r => setTimeout(r, 200)); alive = spawnSync("pgrep", ["-f", fake]).status === 0; }

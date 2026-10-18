@@ -1,5 +1,5 @@
 //! omp `ast_edit`: structural rewrites staged as a proposal, applied by `resolve` or dropped by `reject`.
-use super::{ast_common::{self as common, plural, Resolution}, grep_scope, hashline_edit::write_atomic, tree_output};
+use super::{ast_common::{self as common, plural, Resolution}, cancel, grep_scope, hashline_edit::write_atomic, tree_output};
 use ast_grep_core::{source::Edit, tree_sitter::LanguageExt, MatchStrictness};
 use pi_ast::ops;
 use pi_edit::EditStore;
@@ -20,8 +20,11 @@ struct Outcome { changes: Vec<Change>, counts: BTreeMap<String, usize>, total: u
 
 fn run_once(root: &Path, rewrites: &[(String, String)], paths: &[String], dry_run: bool) -> Result<Outcome, String> {
     let scope = grep_scope::resolve(paths, root)?;
-    let cands = common::collect(&scope, root, None)?;
-    if cands.is_empty() { return Err("ast_edit found no supported source files for the given path/glob".into()); }
+    let (cands, oversized) = common::collect(&scope, root, None)?;
+    if cands.is_empty() {
+        let why = common::oversized_note(&oversized).map_or(String::new(), |n| format!(". {n}"));
+        return Err(format!("ast_edit found no supported source files for the given path/glob{why}"));
+    }
     let Resolution { files, languages, missing } = common::resolve(cands, None);
     let mut parse_errors: Vec<String> = Vec::new();
     let mut rules: Vec<(String, String, HashMap<String, ast_grep_core::matcher::Pattern>, HashMap<String, String>)> = Vec::new();
@@ -38,11 +41,14 @@ fn run_once(root: &Path, rewrites: &[(String, String)], paths: &[String], dry_ru
         }
         rules.push((pat.clone(), out.clone(), ok, bad));
     }
-    let note = common::missing_note(&missing);
+    let note = [common::missing_note(&missing), common::oversized_note(&oversized)].into_iter().flatten().collect::<Vec<_>>().join("\n");
+    let note = (!note.is_empty()).then_some(note);
     let mut out = Outcome { changes: Vec::new(), counts: BTreeMap::new(), total: 0, touched: 0, limit_reached: false, parse_errors, missing: note };
     if rules.is_empty() { return Ok(out); }
     let mut writes: Vec<(PathBuf, String)> = Vec::new();
     for r in &files {
+        // Stopping here is safe: nothing is written until every file has been rewritten in memory.
+        cancel::check()?;
         if let Some(e) = &r.lang_error { out.parse_errors.push(format!("{}: {e}", r.cand.display)); continue; }
         let Some(lang) = r.lang else { continue };
         let key = lang.canonical_name();

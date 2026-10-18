@@ -1,12 +1,15 @@
 //! One language-server process: JSON-RPC over stdio, document sync, diagnostics and progress tracking (omp `client.ts`).
-use super::lsp_config::{detect_language_id, ServerConfig};
+use super::{lsp_config::{detect_language_id, ServerConfig}, process_group};
 use serde_json::{json, Value};
 use std::{collections::{hash_map::DefaultHasher, HashMap, HashSet}, hash::{Hash, Hasher}, path::{Path, PathBuf}, process::Stdio, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering}, Arc, Mutex}, time::{Duration, Instant}};
-use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, sync::{oneshot, Mutex as AMutex, Notify}};
+use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, sync::{mpsc, oneshot, Mutex as AMutex, Notify}};
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const INIT_TIMEOUT: Duration = Duration::from_secs(30);
 const PROJECT_FALLBACK: Duration = Duration::from_secs(15);
+/// Frames queued for the server's stdin; a server that stops reading blocks senders, never memory.
+const OUTBOX_FRAMES: usize = 64;
+const STDERR_TAIL_BYTES: usize = 4000;
 
 pub struct OpenFile { pub version: i64, hash: u64 }
 pub struct Published { pub diagnostics: Vec<Value>, pub version: Option<i64>, at: Instant }
@@ -15,7 +18,8 @@ pub struct Client {
     pub name: String,
     pub cfg: ServerConfig,
     pub cwd: PathBuf,
-    writer: AMutex<ChildStdin>,
+    /// Whole JSON-RPC frames for the writer task: a caller cancelled mid-send can never split one.
+    outbox: mpsc::Sender<Vec<u8>>,
     pending: Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>,
     next_id: AtomicI64,
     pub diagnostics: Mutex<HashMap<String, Published>>,
@@ -25,6 +29,8 @@ pub struct Client {
     progress: Mutex<HashSet<String>>,
     project_loaded: AtomicBool,
     project_notify: Notify,
+    /// Declared before `child` so a dropped client kills the server's group while the leader is unreaped.
+    group: Mutex<process_group::Guard>,
     child: AMutex<Option<Child>>,
     started: Instant,
     pub exited: AtomicBool,
@@ -88,20 +94,17 @@ impl Client {
         let stdin = child.stdin.take().ok_or("language server stdin unavailable")?;
         let stdout = child.stdout.take().ok_or("language server stdout unavailable")?;
         let stderr = child.stderr.take();
+        let group = process_group::Guard::new(child.id());
+        let (outbox, frames) = mpsc::channel(OUTBOX_FRAMES);
+        tokio::spawn(write_loop(stdin, frames));
         let client = Arc::new(Client {
-            name: cfg.command.clone(), cfg: cfg.clone(), cwd: cwd.to_path_buf(), writer: AMutex::new(stdin), pending: Mutex::new(HashMap::new()), next_id: AtomicI64::new(1),
+            name: cfg.command.clone(), cfg: cfg.clone(), cwd: cwd.to_path_buf(), outbox, pending: Mutex::new(HashMap::new()), next_id: AtomicI64::new(1),
             diagnostics: Mutex::new(HashMap::new()), diag_version: AtomicU64::new(0), open_files: Mutex::new(HashMap::new()), capabilities: Mutex::new(Value::Null),
-            progress: Mutex::new(HashSet::new()), project_loaded: AtomicBool::new(false), project_notify: Notify::new(), child: AMutex::new(Some(child)),
+            progress: Mutex::new(HashSet::new()), project_loaded: AtomicBool::new(false), project_notify: Notify::new(), group: Mutex::new(group), child: AMutex::new(Some(child)),
             started: Instant::now(), exited: AtomicBool::new(false), pull_registered: AtomicBool::new(false), stderr_tail: Mutex::new(String::new()),
         });
         tokio::spawn(read_loop(Arc::clone(&client), stdout));
-        if let Some(err) = stderr {
-            let c = Arc::clone(&client);
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(err).lines();
-                while let Ok(Some(l)) = lines.next_line().await { let mut t = c.stderr_tail.lock().unwrap_or_else(|e| e.into_inner()); t.push_str(&l); t.push('\n'); let n = t.len(); if n > 4000 { *t = t[n - 4000..].to_string(); } }
-            });
-        }
+        if let Some(err) = stderr { tokio::spawn(stderr_loop(Arc::downgrade(&client), err)); }
         let root = file_to_uri(cwd);
         let params = json!({
             "processId": std::process::id(), "rootUri": root, "rootPath": cwd.to_string_lossy(), "capabilities": client_capabilities(),
@@ -124,11 +127,8 @@ impl Client {
     pub fn stderr_text(&self) -> String { self.stderr_tail.lock().unwrap_or_else(|e| e.into_inner()).trim().to_string() }
 
     async fn write(&self, msg: &Value) {
-        let body = msg.to_string();
-        let mut w = self.writer.lock().await;
-        let _ = w.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes()).await;
-        let _ = w.write_all(body.as_bytes()).await;
-        let _ = w.flush().await;
+        // Fails only once the writer stopped (server gone); the read loop reports that.
+        let _ = self.outbox.send(frame_of(msg)).await;
     }
 
     pub async fn notify(&self, method: &str, params: Value) { self.write(&json!({"jsonrpc": "2.0", "method": method, "params": params})).await; }
@@ -138,14 +138,15 @@ impl Client {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
-        self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})).await;
         let limit = timeout.unwrap_or(REQUEST_TIMEOUT);
-        match tokio::time::timeout(limit, rx).await {
+        let exchange = async { self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})).await; rx.await };
+        match tokio::time::timeout(limit, exchange).await {
             Ok(Ok(r)) => r,
             Ok(Err(_)) => Err(format!("LSP server exited: {}", self.stderr_text())),
             Err(_) => {
                 self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
-                self.notify("$/cancelRequest", json!({"id": id})).await;
+                // Best effort: a server whose stdin is full must not hold this call past its deadline.
+                let _ = self.outbox.try_send(frame_of(&json!({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": id}})));
                 Err(format!("LSP request {method} timed out after {}ms", limit.as_millis()))
             },
         }
@@ -250,22 +251,60 @@ impl Client {
         self.exited.store(true, Ordering::SeqCst);
         if let Some(mut c) = self.child.lock().await.take() {
             #[cfg(unix)]
-            if let Some(pid) = c.id() { unsafe { libc::kill(-(pid as i32), libc::SIGKILL); } }
+            if let Some(pid) = c.id() { process_group::signal(pid, libc::SIGKILL); }
             let _ = c.start_kill();
             let _ = c.wait().await;
         }
+        self.group.lock().unwrap_or_else(|e| e.into_inner()).release();
     }
 
     /// `shutdown` then `exit`; kills the process when it does not leave within a second.
     pub async fn shutdown(&self) -> bool {
         let _ = self.request("shutdown", Value::Null, Some(Duration::from_secs(5))).await;
-        self.notify("exit", Value::Null).await;
+        // Best effort: a server that stopped reading stdin is killed below instead of blocking this call.
+        let _ = self.outbox.try_send(frame_of(&json!({"jsonrpc": "2.0", "method": "exit", "params": Value::Null})));
         let mut child = self.child.lock().await;
         let Some(c) = child.as_mut() else { return true };
+        let pid = c.id();
         let exited = tokio::time::timeout(Duration::from_secs(1), c.wait()).await.is_ok();
-        if !exited { drop(child); self.kill().await; }
+        if exited {
+            // Helpers the server spawned keep its group alive (and its id reserved): stop them too.
+            #[cfg(unix)]
+            if let Some(p) = pid { process_group::signal(p, libc::SIGKILL); }
+            let _ = pid;
+            child.take();
+            drop(child);
+            self.group.lock().unwrap_or_else(|e| e.into_inner()).release();
+        } else { drop(child); self.kill().await; }
         self.exited.store(true, Ordering::SeqCst);
         exited
+    }
+}
+
+fn frame_of(msg: &Value) -> Vec<u8> {
+    let body = msg.to_string();
+    let mut frame = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
+    frame.extend_from_slice(body.as_bytes());
+    frame
+}
+
+async fn write_loop(mut stdin: ChildStdin, mut frames: mpsc::Receiver<Vec<u8>>) {
+    while let Some(frame) = frames.recv().await {
+        if stdin.write_all(&frame).await.is_err() || stdin.flush().await.is_err() { return; }
+    }
+}
+
+/// Keeps the last few KB of stderr. Reads raw chunks to EOF (no line buffering, so one endless line cannot
+/// grow memory); stopping early would close the pipe and kill a chatty server with SIGPIPE. Holds the client
+/// weakly so a dropped client is not kept alive by its stderr.
+async fn stderr_loop(client: std::sync::Weak<Client>, mut stderr: tokio::process::ChildStderr) {
+    let mut chunk = [0u8; 4096];
+    loop {
+        let n = match stderr.read(&mut chunk).await { Ok(0) | Err(_) => return, Ok(n) => n };
+        let Some(c) = client.upgrade() else { continue };
+        let mut t = c.stderr_tail.lock().unwrap_or_else(|e| e.into_inner());
+        t.push_str(&String::from_utf8_lossy(&chunk[..n]));
+        if t.len() > STDERR_TAIL_BYTES { let cut = t.ceil_char_boundary(t.len() - STDERR_TAIL_BYTES); t.drain(..cut); }
     }
 }
 

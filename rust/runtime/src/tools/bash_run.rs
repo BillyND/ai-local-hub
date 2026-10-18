@@ -1,4 +1,5 @@
 //! Runs one shell command: merged stdout/stderr pipe, process-group kill, timeout and cancellation.
+use super::process_group;
 use std::{io::Read, path::Path, process::Stdio, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use tokio::{process::Command, sync::watch, time::timeout};
 
@@ -21,9 +22,6 @@ const NON_INTERACTIVE_ENV: &[(&str, &str)] = &[
     ("TF_INPUT", "0"), ("TF_IN_AUTOMATION", "1"), ("GH_PROMPT_DISABLED", "1"), ("COMPOSER_NO_INTERACTION", "1"), ("CLOUDSDK_CORE_DISABLE_PROMPTS", "1"),
 ];
 
-#[cfg(unix)]
-fn signal_group(pid: u32, sig: i32) { unsafe { libc::kill(-(pid as i32), sig); } }
-
 fn exit_code(status: std::process::ExitStatus) -> Option<i32> {
     #[cfg(unix)]
     { use std::os::unix::process::ExitStatusExt; status.code().or_else(|| status.signal().map(|s| 128 + s)) }
@@ -34,9 +32,9 @@ fn exit_code(status: std::process::ExitStatus) -> Option<i32> {
 async fn terminate(child: &mut tokio::process::Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
-        signal_group(pid, libc::SIGTERM);
+        process_group::signal(pid, libc::SIGTERM);
         if timeout(Duration::from_secs(2), child.wait()).await.is_ok() { return; }
-        signal_group(pid, libc::SIGKILL);
+        process_group::signal(pid, libc::SIGKILL);
     }
     let _ = child.start_kill();
     let _ = child.wait().await;
@@ -65,14 +63,19 @@ pub async fn run(command: &str, cwd: &Path, limit: Option<Duration>, capture: Ar
     let spawned = cmd.spawn();
     drop(cmd); // closes the parent's copies of the pipe writers so the reader sees EOF
     let mut child = match spawned { Ok(c) => c, Err(e) => return fail(format!("Could not spawn shell: {e}")) };
+    // Kills the command's whole group if this future is dropped (runtime shutdown) while it still runs.
+    let mut group = process_group::Guard::new(child.id());
     let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
-    let sink = Arc::clone(&capture);
+    // Weak: a detached grandchild can hold the pipe open long after the result was built. The reader keeps
+    // draining (so that writer never hits EPIPE) but stops holding the captured output once nobody needs it.
+    let sink = Arc::downgrade(&capture);
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
+                    let Some(sink) = sink.upgrade() else { continue };
                     let mut c = sink.lock().unwrap_or_else(|e| e.into_inner());
                     let room = CAPTURE_CAP.saturating_sub(c.bytes.len());
                     c.bytes.extend_from_slice(&buf[..n.min(room)]);
@@ -89,6 +92,8 @@ pub async fn run(command: &str, cwd: &Path, limit: Option<Duration>, capture: Ar
         () = sleeper => { timed_out = true; terminate(&mut child).await; },
         () = cancelled(cancel) => { was_cancelled = true; terminate(&mut child).await; },
     }
+    // The leader is reaped; anything it deliberately detached keeps running, as it would from a shell.
+    group.release();
     // Let the reader drain what the shell wrote, but never wait on a daemonised grandchild holding the pipe.
     let _ = timeout(Duration::from_secs(2), done_rx).await;
     RunResult { exit_code: code, timed_out, cancelled: was_cancelled, wall: start.elapsed(), spawn_error: None }

@@ -4,21 +4,30 @@ use std::{fs::File, io::Read, path::Path};
 pub const MAX_COLUMNS: usize = 512;
 pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
-pub enum Matcher { Std(regex::Regex), Fancy(fancy_regex::Regex) }
+enum Engine { Std(regex::Regex), Fancy(fancy_regex::Regex) }
+
+pub struct Matcher {
+    engine: Engine,
+    /// The same Rust regex in multi-line mode, run once over a whole file: a file it does not match has no
+    /// matching line, so most files skip the per-line pass. `None` when line-wise and whole-text anchors differ.
+    prefilter: Option<regex::Regex>,
+}
 
 impl Matcher {
     pub fn find(&self, text: &str) -> Option<(usize, usize)> {
-        match self {
-            Self::Std(r) => r.find(text).map(|m| (m.start(), m.end())),
-            Self::Fancy(r) => r.find(text).ok().flatten().map(|m| (m.start(), m.end())),
+        match &self.engine {
+            Engine::Std(r) => r.find(text).map(|m| (m.start(), m.end())),
+            Engine::Fancy(r) => r.find(text).ok().flatten().map(|m| (m.start(), m.end())),
         }
     }
     fn matches_in<'a>(&'a self, text: &'a str) -> Vec<(usize, usize)> {
-        match self {
-            Self::Std(r) => r.find_iter(text).map(|m| (m.start(), m.end())).collect(),
-            Self::Fancy(r) => r.find_iter(text).flatten().map(|m| (m.start(), m.end())).collect(),
+        match &self.engine {
+            Engine::Std(r) => r.find_iter(text).map(|m| (m.start(), m.end())).collect(),
+            Engine::Fancy(r) => r.find_iter(text).flatten().map(|m| (m.start(), m.end())).collect(),
         }
     }
+    /// False only when no line of `text` can match.
+    pub fn may_match(&self, text: &str) -> bool { self.prefilter.as_ref().is_none_or(|r| r.is_match(text)) }
 }
 
 /// Escapes `{`/`}` that are not valid `{N}`, `{N,}`, `{N,M}` quantifiers.
@@ -27,7 +36,16 @@ fn sanitize_braces(p: &str) -> String {
     let (mut out, mut i) = (String::new(), 0);
     while i < c.len() {
         match c[i] {
-            '\\' if i + 1 < c.len() => { out.push(c[i]); out.push(c[i + 1]); i += 2; continue; },
+            '\\' if i + 1 < c.len() => {
+                out.push(c[i]);
+                out.push(c[i + 1]);
+                // `\p{L}`, `\x{1F600}`, `\u{00e9}`, `\k{name}`: these braces belong to the escape, not a quantifier.
+                if matches!(c[i + 1], 'p' | 'P' | 'x' | 'u' | 'U' | 'k' | 'N') && c.get(i + 2) == Some(&'{') {
+                    if let Some(n) = c[i + 2..].iter().position(|x| *x == '}') { out.extend(&c[i + 2..=i + 2 + n]); i += 3 + n; continue; }
+                }
+                i += 2;
+                continue;
+            },
             '{' => {
                 let end = c[i..].iter().position(|x| *x == '}').map(|n| i + n);
                 let valid = end.is_some_and(|e| { let body: String = c[i + 1..e].iter().collect(); !body.is_empty() && body.split(',').count() <= 2 && body.chars().all(|x| x.is_ascii_digit() || x == ',') && !body.starts_with(',') });
@@ -52,12 +70,21 @@ fn escape_unescaped_parens(p: &str) -> String {
     out
 }
 
+/// `\A` / `\z` or a flag group turning multi-line off (`(?-m)`) anchor to the whole text, not to each line.
+fn anchors_to_text(pattern: &str) -> bool {
+    static TEXT_ANCHOR: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"\\[Az]|\(\?[a-zA-Z]*-[a-zA-Z]*m").expect("valid"));
+    TEXT_ANCHOR.is_match(pattern)
+}
+
 fn try_build(pattern: &str, ignore_case: bool) -> Result<Matcher, String> {
     match regex::RegexBuilder::new(pattern).case_insensitive(ignore_case).build() {
-        Ok(r) => Ok(Matcher::Std(r)),
+        Ok(r) => {
+            let prefilter = if anchors_to_text(pattern) { None } else { regex::RegexBuilder::new(pattern).case_insensitive(ignore_case).multi_line(true).build().ok() };
+            Ok(Matcher { engine: Engine::Std(r), prefilter })
+        },
         Err(std_err) => {
             let src = if ignore_case { format!("(?i){pattern}") } else { pattern.to_string() };
-            fancy_regex::Regex::new(&src).map(Matcher::Fancy).map_err(|_| std_err.to_string())
+            fancy_regex::Regex::new(&src).map(|r| Matcher { engine: Engine::Fancy(r), prefilter: None }).map_err(|_| std_err.to_string())
         },
     }
 }
@@ -106,15 +133,13 @@ pub struct Found { pub line_number: usize, pub line: String, pub before: Vec<(us
 
 pub struct Params { pub multiline: bool, pub per_file_cap: usize, pub ctx_before: usize, pub ctx_after: usize }
 
-/// Reads up to MAX_FILE_BYTES; text after the first NUL byte is dropped (binary quit).
-pub fn read_for_search(path: &Path) -> Option<(String, bool)> {
-    let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() { return None; }
-    let oversized = meta.len() > MAX_FILE_BYTES;
-    let mut buf = Vec::new();
+/// Reads up to MAX_FILE_BYTES of a regular file whose size the walk already knows; text after the first
+/// NUL byte is dropped (binary quit).
+pub fn read_for_search(path: &Path, len: u64) -> Option<String> {
+    let mut buf = Vec::with_capacity(len.min(MAX_FILE_BYTES) as usize);
     File::open(path).ok()?.take(MAX_FILE_BYTES).read_to_end(&mut buf).ok()?;
     if let Some(nul) = buf.iter().position(|b| *b == 0) { buf.truncate(nul); }
-    Some((String::from_utf8_lossy(&buf).into_owned(), oversized))
+    Some(match String::from_utf8(buf) { Ok(s) => s, Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned() })
 }
 
 /// Returns matches (at most `per_file_cap`) and whether the per-file cap was hit.
@@ -178,6 +203,20 @@ mod tests {
         let m = build_matcher("a\\nb", false).unwrap();
         let (f, _) = search_text(&m, "x\na\nb\ny\n", &Params { multiline: true, per_file_cap: 10, ctx_before: 0, ctx_after: 0 });
         assert_eq!((f[0].line_number, f[0].line.as_str()), (2, "a\nb"));
+    }
+    #[test] fn escape_braces_are_not_treated_as_quantifiers() {
+        assert_eq!(run(r"\p{Lu}x", "Ax\nax\n", 0).len(), 1);
+        assert_eq!(run(r"\x{41}", "A\nB\n", 0).len(), 1);
+        assert_eq!(sanitize_braces(r"a{2}\p{L}{"), r"a{2}\p{L}\{");
+    }
+    #[test] fn prefilter_never_hides_a_matching_line() {
+        for (pattern, text, n) in [("^fn ", "x\nfn a\n", 1), ("b$", "ab\nb c\n", 1), ("x", "a\nb\n", 0), (r"\Afoo", "foo\nfoo\n", 2), ("(?i)HIT", "a hit\n", 1)] {
+            let m = build_matcher(pattern, false).unwrap();
+            assert_eq!(run(pattern, text, 0).len(), n, "{pattern}");
+            if n > 0 { assert!(m.may_match(text), "{pattern}"); }
+        }
+        assert!(!build_matcher("needle", false).unwrap().may_match("hay\nstack\n"));
+        assert!(build_matcher(r"\Afoo", false).unwrap().prefilter.is_none());
     }
     #[test] fn per_file_cap_is_reported() {
         let (f, hit) = search_text(&build_matcher("x", false).unwrap(), "x\nx\nx\n", &Params { multiline: false, per_file_cap: 2, ctx_before: 0, ctx_after: 0 });

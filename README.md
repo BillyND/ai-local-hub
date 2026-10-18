@@ -71,11 +71,11 @@ Tool groups are configured per instance. `core` is always enabled; `ast`, `lsp`,
 
 | Tool | Behavior |
 | --- | --- |
-| `read` | oh-my-pi style: `path` with selectors (`f.rs:50-80`, `:-5`, `:3,9-12`, `:raw`); text rows `N:text` under a `[path#TAG]` snapshot header; directories; PNG/JPEG/GIF/WebP/BMP as MCP image content |
-| `bash` | oh-my-pi style: `command`, `cwd`, `timeout` (0 = no deadline, else clamped 1-3600, default 300), `async`; merged stdout/stderr, `Wall time:` line, `Command exited with code N`; head+tail truncation with the full output at `artifact://<id>` (readable with `read`); commands still running 60s in (or 1s before `timeout`) move to background job `bg_N` |
-| `ast_grep` | oh-my-pi style structural search (ast-grep, tree-sitter): one pattern per call, `$NAME` / `$$$NAME` metavariables, `*N:text` rows with `meta:` captures under `file#TAG` headers, 50 matches per page; works for the 18 natively linked languages |
+| `read` | oh-my-pi style: `path` with selectors (`f.rs:50-80`, `:-5`, `:3,9-12`, `:raw`); text rows `N:text` under a `[path#TAG]` snapshot header; directories; PNG/JPEG/GIF/WebP/BMP as MCP image content; PDF/DOCX/PPTX/XLSX as extracted text (PDFs are parsed in a separate child process with a 45s limit, so a malformed file fails only that call) |
+| `bash` | oh-my-pi style: `command`, `cwd`, `timeout` (0 = no deadline, else clamped 1-3600, default 300), `async`; merged stdout/stderr, `Wall time:` line, `Command exited with code N`; head+tail truncation with the full output at `artifact://<id>` (readable with `read`); commands still running 60s in (or 1s before `timeout`) move to background job `bg_N`; background jobs stop, with their whole process tree, when their MCP session closes or sits idle for 30 minutes, and when the instance stops |
+| `ast_grep` | oh-my-pi style structural search (ast-grep, tree-sitter): one pattern per call, `$NAME` / `$$$NAME` metavariables, `*N:text` rows with `meta:` captures under `file#TAG` headers, 50 matches per page; works for the 18 natively linked languages; files over 4 MiB are skipped and listed |
 | `ast_edit` | Structural rewrites (`ops: [{pat, out}]`, `paths`) staged as a diff proposal; nothing is written until `resolve` (apply) or `reject` (discard) |
-| `lsp` | oh-my-pi style language-server tool (`status`, `diagnostics`, `definition`, `type_definition`, `implementation`, `references`, `hover`, `symbols`, `rename`, `rename_file`, `code_actions`, `capabilities`, `request`, `reload`): servers are discovered from omp's default table (55 languages) plus `lsp.json`, binaries from the project (`node_modules/.bin`, `.venv`, ...) or `PATH`; you install the language servers yourself |
+| `lsp` | oh-my-pi style language-server tool (`status`, `diagnostics`, `definition`, `type_definition`, `implementation`, `references`, `hover`, `symbols`, `rename`, `rename_file`, `code_actions`, `capabilities`, `request`, `reload`): servers are discovered from omp's default table (55 languages) plus `lsp.json`, binaries from the project (`node_modules/.bin`, `.venv`, ...) or `PATH`; you install the language servers yourself. All sessions of an instance share one server per language, and it exits when the last session ends |
 | `wait` | Blocks on background jobs (50s cap, then a still-running snapshot); settled job results are also appended to the next tool result |
 | `kill_job` | Cancels a background job (`bg_N`) |
 | `edit` | oh-my-pi **hashline** patches (`[path#TAG]` + `PUT`/`CUT`/`REM`/`MV`), stale-tag recovery, block ops, atomic apply; engine vendored from oh-my-pi |
@@ -83,6 +83,8 @@ Tool groups are configured per instance. `core` is always enabled; `ast`, `lsp`,
 | `grep` | oh-my-pi style: `path` is a `;`-separated list of files/dirs/globs (bare `*.ts` recurses), `case`, `gitignore`, `skip` (20 files/page), file selectors `f.ts:50-100`; Rust regex with look-around fallback; grouped `*N:text` rows under `file#TAG` headers |
 | `glob` | oh-my-pi style path/pattern search: `;`-separated list, `hidden`, `gitignore`, `limit` (max 200), newest first, grouped by directory |
 | `ls` | Sorted directory listing |
+
+File and search tools run off the worker's async threads, so a large scan never stalls other calls. At most 4 tree scans (`grep`, `glob`, `ast_grep`, `ast_edit`, `resolve`) run at once per instance; further calls wait their turn, and a scan stops after 120s or as soon as the client cancels the call.
 
 Relative paths use the configured workspace as the working directory. **It is not a sandbox.** Absolute paths and arbitrary shell access are intentionally permitted; connect only trusted AI clients.
 

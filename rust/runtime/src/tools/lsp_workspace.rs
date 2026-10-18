@@ -1,6 +1,7 @@
 //! `lsp diagnostics file="*"`: runs the project's own checker (cargo / tsc / go / pyright), omp `workspace-diagnostics.ts`.
+use super::process_group;
 use std::{path::Path, process::Stdio, time::Duration};
-use tokio::process::Command;
+use tokio::{io::{AsyncRead, AsyncReadExt}, process::Command, task::JoinHandle};
 
 struct Checker { description: &'static str, command: Option<Vec<String>> }
 
@@ -22,13 +23,43 @@ async fn run_one(cwd: &Path, c: &Checker, limit: Duration) -> String {
     let mut cmd = Command::new(&command[0]);
     cmd.args(&command[1..]).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     if let Some(p) = super::shell_path() { cmd.env("PATH", p); }
-    let out = match tokio::time::timeout(limit, cmd.output()).await { Ok(Ok(o)) => o, Ok(Err(e)) => return format!("Failed to run {}: {e}", command.join(" ")), Err(_) => return format!("Failed to run {}: timed out", command.join(" ")) };
+    #[cfg(unix)]
+    { cmd.process_group(0); }
+    let mut child = match cmd.spawn() { Ok(c) => c, Err(e) => return format!("Failed to run {}: {e}", command.join(" ")) };
+    let pid = child.id();
+    let (stdout, stderr) = (drain(child.stdout.take()), drain(child.stderr.take()));
+    // cargo / tsc fan out into compiler processes: stop the whole group on timeout or when this call is
+    // dropped. Declared after `child`, so it is dropped (and signals) before the leader can be reaped.
+    let mut group = process_group::Guard::new(pid);
+    let status = tokio::select! {
+        r = child.wait() => r,
+        () = tokio::time::sleep(limit) => {
+            // `wait` has not returned, so the leader is unreaped and its group id cannot have been reused.
+            drop(group);
+            return format!("Failed to run {}: timed out", command.join(" "));
+        },
+    };
+    group.release();
+    let status = match status { Ok(s) => s, Err(e) => return format!("Failed to run {}: {e}", command.join(" ")) };
+    let out = std::process::Output { status, stdout: collect(stdout).await, stderr: collect(stderr).await };
     let combined = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).trim().to_string();
     if combined.is_empty() {
         return match out.status.code() { Some(0) => "No issues found".into(), Some(c) => format!("Failed to run {}: the checker exited with code {c} without reporting anything, so the workspace was not verified", command.join(" ")), None => format!("Failed to run {}: the checker was killed without reporting anything, so the workspace was not verified", command.join(" ")) };
     }
     let lines: Vec<&str> = combined.split('\n').collect();
     if lines.len() > 50 { format!("{}\n[…{}ln elided…]", lines[..50].join("\n"), lines.len() - 50) } else { combined }
+}
+
+/// Reads a pipe on its own task so a chatty checker never blocks on a full pipe while it is waited on.
+fn drain<R: AsyncRead + Unpin + Send + 'static>(pipe: Option<R>) -> JoinHandle<Vec<u8>> {
+    tokio::spawn(async move { let mut buf = Vec::new(); if let Some(mut p) = pipe { let _ = p.read_to_end(&mut buf).await; } buf })
+}
+
+/// What a pipe delivered; a detached grandchild holding it open does not hold the result.
+async fn collect(mut reader: JoinHandle<Vec<u8>>) -> Vec<u8> {
+    let out = tokio::time::timeout(Duration::from_secs(2), &mut reader).await;
+    reader.abort();
+    out.ok().and_then(Result::ok).unwrap_or_default()
 }
 
 pub async fn run(cwd: &Path, limit: Duration) -> (String, String) {

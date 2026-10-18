@@ -1,7 +1,7 @@
 //! omp `write`: whole-file write with hashline-prefix stripping, generated-file guard and snapshot tag.
 use super::{display::display_path, hashline_edit::policy};
 use pi_edit::{modes::hashline::prefixes::strip_hashline_prefixes, path_policy::{canonical_key, unwrap_hashline_header_path}, text::normalize_to_lf, EditStore};
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, io::Read, path::{Path, PathBuf}};
 
 pub fn run(root: &Path, store: &EditStore, path: &str, content: Option<String>) -> Result<String, String> {
     let content = content.ok_or_else(|| format!("content is required for {path}."))?;
@@ -12,7 +12,8 @@ pub fn run(root: &Path, store: &EditStore, path: &str, content: Option<String>) 
         if !meta.is_file() {
             return Err(format!("Cannot write '{display}': it is not a regular file."));
         }
-        let head = fs::read(&abs).map(|b| b[..b.len().min(1024)].to_vec()).unwrap_or_default();
+        let mut head = Vec::with_capacity(1024);
+        let _ = fs::File::open(&abs).and_then(|f| f.take(1024).read_to_end(&mut head));
         if let Some(message) = policy(root).auto_generated_message(&display, &head) { return Err(message); }
     }
     let lines: Vec<String> = content.split('\n').map(String::from).collect();

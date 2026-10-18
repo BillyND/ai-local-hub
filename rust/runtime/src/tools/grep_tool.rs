@@ -17,22 +17,61 @@ fn in_ranges(line: usize, ranges: &[super::read_selector::Range]) -> bool {
     ranges.iter().any(|r| line >= r.start && r.end.is_none_or(|e| line <= e))
 }
 
+/// Files searched per batch; the stop flag and the total cap are checked between batches.
+const BATCH: usize = 256;
+
+/// Search threads per call: half the cores, at most 4, so one grep never saturates the machine.
+fn workers() -> usize {
+    static N: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| std::thread::available_parallelism().map_or(1, |n| n.get()).div_ceil(2).clamp(1, 4));
+    *N
+}
+
+fn search_file(entry: &search_walk::Entry, matcher: &Matcher, params: &Params) -> Option<(Vec<Found>, bool)> {
+    let text = eng::read_for_search(&entry.abs, entry.len)?;
+    if !matcher.may_match(&text) { return Some((Vec::new(), false)); }
+    Some(eng::search_text(matcher, &text, params))
+}
+
+/// Searches `batch` on up to `workers()` threads; results keep the batch order.
+fn search_batch(batch: &[search_walk::Entry], matcher: &Matcher, params: &Params) -> Vec<Option<(Vec<Found>, bool)>> {
+    let threads = workers().min(batch.len() / 16).max(1);
+    if threads == 1 { return batch.iter().map(|e| search_file(e, matcher, params)).collect(); }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut out: Vec<Option<(Vec<Found>, bool)>> = (0..batch.len()).map(|_| None).collect();
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads).map(|_| s.spawn(|| {
+            let mut mine = Vec::new();
+            loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(entry) = batch.get(i) else { break };
+                mine.push((i, search_file(entry, matcher, params)));
+            }
+            mine
+        })).collect();
+        for h in handles { for (i, r) in h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)) { out[i] = r; } }
+    });
+    out
+}
+
 fn collect(scope: &Scope, matcher: &Matcher, params: &Params, gitignore: bool) -> Result<(Vec<Hit>, bool, usize), String> {
     let (mut hits, mut limit_reached, mut searched) = (Vec::new(), false, 0usize);
     let mut seen = std::collections::HashSet::new();
     let opts = search_walk::Opts { hidden: true, gitignore, include_dirs: false, bare_glob: false };
     'targets: for t in &scope.targets {
         let files = search_walk::walk(&t.base, t.glob.as_deref(), search_walk::Opts { bare_glob: t.bare, ..opts })?;
-        let (small, big): (Vec<_>, Vec<_>) = files.into_iter().partition(|e| std::fs::metadata(&e.abs).map(|m| m.len() <= eng::MAX_FILE_BYTES).unwrap_or(true));
-        for entry in small.into_iter().chain(big) {
-            let Some((text, _)) = eng::read_for_search(&entry.abs) else { continue };
-            searched += 1;
-            let (found, cap_hit) = eng::search_text(matcher, &text, params);
-            limit_reached |= cap_hit;
-            for f in found {
-                if !seen.insert((entry.abs.clone(), f.line_number)) { continue; }
-                hits.push(Hit { abs: entry.abs.clone(), found: f });
-                if hits.len() >= TOTAL_CAP { limit_reached = true; break 'targets; }
+        let (small, big): (Vec<_>, Vec<_>) = files.into_iter().partition(|e| e.len <= eng::MAX_FILE_BYTES);
+        let ordered: Vec<search_walk::Entry> = small.into_iter().chain(big).collect();
+        for batch in ordered.chunks(BATCH) {
+            super::cancel::check()?;
+            for (entry, result) in batch.iter().zip(search_batch(batch, matcher, params)) {
+                let Some((found, cap_hit)) = result else { continue };
+                searched += 1;
+                limit_reached |= cap_hit;
+                for f in found {
+                    if !seen.insert((entry.abs.clone(), f.line_number)) { continue; }
+                    hits.push(Hit { abs: entry.abs.clone(), found: f });
+                    if hits.len() >= TOTAL_CAP { limit_reached = true; break 'targets; }
+                }
             }
         }
     }
@@ -57,7 +96,7 @@ fn render_file(file: &[&Found], tag: bool, truncated_any: &mut bool) -> Vec<Stri
 }
 
 /// Keeps whole lines up to the byte budget (omp `truncateHead`); returns (text, shown_lines, total_lines).
-fn truncate_head(text: &str) -> (String, Option<(usize, usize)>) {
+pub(super) fn truncate_head(text: &str) -> (String, Option<(usize, usize)>) {
     let total = text.split('\n').count();
     if text.len() <= MAX_OUTPUT_BYTES { return (text.to_string(), None); }
     let (mut used, mut kept) = (0usize, 0usize);

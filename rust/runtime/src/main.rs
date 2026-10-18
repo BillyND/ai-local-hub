@@ -1,13 +1,24 @@
-use ai_local_hub_runtime::{tools::CodingTools,tunnel};
+use ai_local_hub_runtime::{tools::{pdf_worker_main, CodingTools, PDF_WORKER_FLAG},tunnel};
 
 use anyhow::{Context, Result};
 use axum::{http::{HeaderMap, StatusCode}, middleware::{self, Next}, response::Response, routing::get, Router};
 use rmcp::transport::{
-    streamable_http_server::{session::local::LocalSessionManager, tower::StreamableHttpService},
+    streamable_http_server::{session::{local::LocalSessionManager, SessionManager}, tower::StreamableHttpService},
     StreamableHttpServerConfig,
 };
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{io::AsyncReadExt, net::TcpListener, signal, sync::watch};
+use tokio_util::sync::CancellationToken;
+
+/// An MCP session idle this long is closed and its background jobs stopped. Long enough that a dev server
+/// started with `timeout: 0` survives the user testing it for a while between turns.
+const SESSION_IDLE: Duration = Duration::from_secs(30 * 60);
+/// After shutdown begins, open HTTP connections get this long before they are dropped. The manager
+/// force-kills a worker after 10 s, and a force-killed worker cannot stop its children.
+const HTTP_DRAIN: Duration = Duration::from_secs(2);
+/// Blocking-pool work still running at exit (a scan finishing its batch, the stdin reader, which cannot be
+/// cancelled) gets this long before the process leaves it behind.
+const BLOCKING_DRAIN: Duration = Duration::from_millis(500);
 
 fn emit(value: serde_json::Value) {
     println!("{}", value);
@@ -42,10 +53,15 @@ async fn run() -> Result<()> {
     emit(serde_json::json!({"type":"log","message":format!("Workspace: {}",workspace.display())}));
     emit(serde_json::json!({"type":"phase","message":"Starting Rust MCP server"}));
     let groups=ai_local_hub_runtime::tools::ToolGroups::from_env().map_err(|e|anyhow::anyhow!("invalid AI_LOCAL_HUB_TOOL_GROUPS: {e}"))?;
+    if let Ok(exe)=env::current_exe() { CodingTools::enable_pdf_worker(exe); }
+    let sessions=CancellationToken::new();
+    let mut session_manager=LocalSessionManager::default();
+    session_manager.session_config.keep_alive=Some(SESSION_IDLE);
+    let session_manager=Arc::new(session_manager);
     let service: StreamableHttpService<CodingTools, LocalSessionManager> = StreamableHttpService::new(
         { let workspace=workspace.clone(); let groups=groups.clone(); move || Ok(CodingTools::with_groups(workspace.clone(),groups.clone())) },
-        LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default(),
+        Arc::clone(&session_manager),
+        StreamableHttpServerConfig::default().with_cancellation_token(sessions.clone()),
     );
     let listener = TcpListener::bind("127.0.0.1:0").await.context("bind loopback MCP")?;
     let port = listener.local_addr()?.port();
@@ -106,29 +122,59 @@ async fn run() -> Result<()> {
         emit(serde_json::json!({"type":"log","message":"OpenAI tunnel ready"}));
     }
     emit(serde_json::json!({"type":"ready","tunnel":!local_only}));
-    tokio::select! {
+    let tunnel_exit=tokio::select! {
         _=async {
             while !*shutdown_rx.borrow() {
                 if shutdown_rx.changed().await.is_err() { break; }
             }
-        }=>{},
-        _=signal::ctrl_c()=>{},
+        }=>None,
+        _=signal::ctrl_c()=>None,
+        _=terminated()=>None,
         status=async {
             if let Some(t)=tunnel.as_mut() {t.wait().await.ok()} else {std::future::pending().await}
-        } => {anyhow::bail!("tunnel-client exited unexpectedly: {status:?}");}
-    }
+        } => Some(status),
+    };
     if let Some(mut child)=tunnel {
         let _=child.start_kill();
         let _=child.wait().await;
     }
+    // End the SSE streams and close every MCP session (their background jobs stop), stop language
+    // servers and command trees, then give the HTTP server a short drain: all of it well inside the
+    // manager's 10 s kill deadline.
+    sessions.cancel();
+    let _=tokio::time::timeout(Duration::from_secs(1),async {
+        let ids:Vec<_>=session_manager.sessions.read().await.keys().cloned().collect();
+        for id in ids { let _=session_manager.close_session(&id).await; }
+    }).await;
+    CodingTools::shutdown_children().await;
     let _=shutdown_tx.send(true);
-    let _=server.await;
+    let mut server=server;
+    if tokio::time::timeout(HTTP_DRAIN,&mut server).await.is_err() { server.abort(); }
     if let Some(dir)=runtime_dir {let _=tokio::fs::remove_dir_all(dir).await;}
+    if let Some(status)=tunnel_exit { anyhow::bail!("tunnel-client exited unexpectedly: {status:?}"); }
     Ok(())
 }
-#[tokio::main]
-async fn main() {
-    if let Err(error) = run().await {
+/// SIGTERM (e.g. `kill`, system shutdown) gets the same clean stop as Ctrl+C.
+async fn terminated() {
+    #[cfg(unix)]
+    if let Ok(mut term)=signal::unix::signal(signal::unix::SignalKind::terminate()) { term.recv().await; return; }
+    std::future::pending::<()>().await
+}
+fn main() {
+    let mut args=env::args_os().skip(1);
+    if args.next().is_some_and(|arg| arg==PDF_WORKER_FLAG) { std::process::exit(pdf_worker_main(args.next())); }
+    let runtime=match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+        Ok(r)=>r,
+        Err(error)=>{ emit(serde_json::json!({"type":"fatal","message":format!("Cannot start the async runtime: {error}")})); std::process::exit(1); }
+    };
+    let outcome=runtime.block_on(async {
+        let outcome=run().await;
+        if outcome.is_err() { CodingTools::shutdown_children().await; }
+        outcome
+    });
+    // Dropping the runtime would wait for every blocking task, without limit.
+    runtime.shutdown_timeout(BLOCKING_DRAIN);
+    if let Err(error)=outcome {
         emit(serde_json::json!({"type":"fatal","message":format!("{error:#}")}));
         std::process::exit(1);
     }

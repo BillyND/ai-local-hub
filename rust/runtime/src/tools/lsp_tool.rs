@@ -2,8 +2,10 @@
 use super::{lsp_actions, lsp_client::{file_to_uri, Client}, lsp_config::{self, ServerConfig}, lsp_edits, lsp_format as fmt, lsp_pool::Pool, lsp_position::resolve_symbol_column, search_paths::{format_rel_cwd, resolve_to_cwd}};
 use serde_json::{json, Value};
 use std::{path::{Path, PathBuf}, sync::{Arc, Mutex}, time::Duration};
+use tokio_util::sync::CancellationToken;
 
-pub struct Ctx { pub root: PathBuf, pub pool: Arc<Pool>, pub server: Mutex<String> }
+/// `cancel` fires when the client cancels the call.
+pub struct Ctx { pub root: PathBuf, pub pool: Arc<Pool>, pub server: Mutex<String>, pub cancel: CancellationToken }
 
 pub struct Input { pub action: String, pub file: Option<String>, pub line: Option<f64>, pub symbol: Option<String>, pub query: Option<String>, pub new_name: Option<String>, pub apply: Option<bool>, pub timeout: Option<f64>, pub payload: Option<String> }
 
@@ -21,7 +23,9 @@ pub async fn run(ctx: &Ctx, input: Input) -> Out {
     if !READONLY.contains(&input.action.as_str()) && !WRITE_ACTIONS.contains(&input.action.as_str()) { return ok(format!("Unknown action: {}", input.action)); }
     let secs = input.timeout.filter(|t| t.is_finite()).unwrap_or(20.0).clamp(5.0, 300.0);
     let action = input.action.clone();
-    match tokio::time::timeout(Duration::from_secs_f64(secs), dispatch(ctx, input, secs)).await {
+    let run = tokio::time::timeout(Duration::from_secs_f64(secs), dispatch(ctx, input, secs));
+    let outcome = tokio::select! { r = run => r, () = ctx.cancel.cancelled() => return Err(format!("LSP {action} was cancelled")) };
+    match outcome {
         Ok(r) => r,
         Err(_) => Err(format!("LSP {action} timed out after {}s on {}. The server may still be indexing; try again or pass timeout=<larger>.", secs as u64, ctx.server.lock().unwrap_or_else(|e| e.into_inner()))),
     }

@@ -56,6 +56,15 @@ impl Jobs {
         format!("Cancelled background job {id}.")
     }
 
+    /// Stops every running job; used when the owning session ends, after which nobody could reach them.
+    pub fn cancel_all(&self) {
+        let mut g = self.lock();
+        let mut any = false;
+        for j in g.jobs.values_mut().filter(|j| j.state == State::Running) { j.state = State::Cancelled; let _ = j.cancel.send(true); any = true; }
+        drop(g);
+        if any { self.notify.notify_waiters(); }
+    }
+
     /// Settled results not yet shown to the model, formatted as one `<system-notice>` (marks them delivered).
     pub fn take_notices(&self, save_full: &dyn Fn(&str) -> Option<String>) -> Option<String> {
         let mut g = self.lock();
@@ -164,6 +173,17 @@ mod tests {
         assert_eq!(jobs.cancel(&id), "Cancelled background job bg_1.");
         assert_eq!(jobs.cancel(&id), "Background job bg_1 is already cancelled.");
         assert_eq!(jobs.cancel("bg_9"), "Background job not found: bg_9");
+    }
+    #[test] fn cancel_all_signals_every_running_job() {
+        let jobs = Jobs::default();
+        let (tx, rx) = watch::channel(false);
+        let id = jobs.register("dev server", tx).unwrap();
+        let done = job(&jobs, "done");
+        jobs.settle(&done, false, "ok".into());
+        jobs.cancel_all();
+        assert!(*rx.borrow());
+        assert_eq!(jobs.cancel(&id), "Background job bg_1 is already cancelled.");
+        assert_eq!(jobs.cancel(&done), "Background job bg_2 is already completed.");
     }
     #[test] fn job_cap_is_enforced() {
         let jobs = Jobs::default();

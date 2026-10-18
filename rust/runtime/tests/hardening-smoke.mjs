@@ -92,7 +92,29 @@ try{
     assert.notEqual(alias.isError,true);
     assert.match(await readFile(text,"utf8"),/linked/);
   }
-  console.log("Rust hardening integration: PASS (shell output/timeout/truncation, memory caps, host/origin, tools, symlink)");
+  // PDFs are parsed in a child process: a valid one is read, and a malformed one whose /Parent chain loops
+  // (unbounded recursion in the parser) fails only that call; the worker keeps serving.
+  const pdf=objects=>{
+    let body="%PDF-1.4\n";const offsets=[];
+    objects.forEach((o,i)=>{offsets.push(Buffer.byteLength(body));body+=`${i+1} 0 obj\n${o}\nendobj\n`;});
+    const xref=Buffer.byteLength(body);
+    body+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n`+offsets.map(o=>String(o).padStart(10,"0")+" 00000 n \n").join("");
+    return body+`trailer\n<< /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  };
+  const content="BT /F1 24 Tf 72 700 Td (Hello PDF worker) Tj ET";
+  const stream=`<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+  const font="<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+  await writeFile(join(root,"hello.pdf"),pdf(["<< /Type /Catalog /Pages 2 0 R >>","<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",stream,font]));
+  const helloPdf=await call("read",{path:"hello.pdf"});
+  assert.notEqual(helloPdf.isError,true,asText(helloPdf));
+  assert.match(asText(helloPdf),/Hello PDF worker/);
+  await writeFile(join(root,"cyclic.pdf"),pdf(["<< /Type /Catalog /Pages 2 0 R >>","<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 6 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",stream,font,
+    "<< /Type /Pages /Parent 7 0 R /Kids [3 0 R] /Count 1 >>","<< /Type /Pages /Parent 6 0 R /Kids [] /Count 0 >>"]));
+  assert.equal((await call("read",{path:"cyclic.pdf"})).isError,true);
+  assert.match(asText(await call("read",{path:"small.txt"})),/first/);
+  console.log("Rust hardening integration: PASS (shell output/timeout/truncation, memory caps, host/origin, tools, symlink, PDF isolation)");
 }finally{
   await client.close().catch(()=>{});
   worker.stdin.end();
