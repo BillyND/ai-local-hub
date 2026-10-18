@@ -1,1 +1,1 @@
-- [Updater signing and release versions](reference_updater_signing.md) — updater key location, tag must equal package.json version, plugin source path
+- [Dependency shutdown gotchas](dependency-shutdown-gotchas.md): rmcp session/cancel tokens, tokio runtime-drop and stdin hang, Tauri restart and macOS Cmd+Q exit paths
