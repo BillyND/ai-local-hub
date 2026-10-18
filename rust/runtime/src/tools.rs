@@ -29,6 +29,7 @@ mod lsp_position;
 mod lsp_tool;
 mod lsp_workspace;
 mod read_dir;
+mod read_document;
 mod read_selector;
 mod read_text;
 mod search_paths;
@@ -166,7 +167,7 @@ pub struct GrepArgs {/// Search pattern (regex)
 
 #[tool_router(router = all_tool_router)]
 impl CodingTools {
-    #[tool(description = "Read a file, directory or image. Line selectors go in the path (`src/a.rs:50-80`, `:-5`, `:raw`). Text rows are `N:text` under a `[path#TAG]` snapshot header that `edit` anchors on.", annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
+    #[tool(description = "Read a file, directory or image. PDF, DOCX, PPTX and XLSX files are returned as extracted text. Line selectors go in the path (`src/a.rs:50-80`, `:-5`, `:raw`). Text rows are `N:text` under a `[path#TAG]` snapshot header that `edit` anchors on.", annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     fn read(&self,Parameters(args):Parameters<ReadArgs>)->CallToolResult {
         let detail=json!({"path":args.path});
         self.deliver(traced("read",detail,||self.read_impl(args)))
@@ -186,6 +187,9 @@ impl CodingTools {
             let mut r=CallToolResult::success(vec![ContentBlock::image(STANDARD.encode(&data),mime)]);
             r.is_error=None;
             return r;
+        }
+        if let Some(doc)=read_document::extract(&ext,&data) {
+            return match doc {Ok(t)=>ok(cut(t)),Err(e)=>err(format!("Cannot extract text from '{target}': {e}"))};
         }
         let display=if target.starts_with("artifact://"){target.clone()}else{display::display_path(&self.root,&path)};
         let binary_note=format!("[Cannot read binary file '{display}' ({} bytes); not valid UTF-8 text. Use ':raw' to read bytes verbatim.]",data.len());
