@@ -8,6 +8,20 @@ export interface Status {
   error?: string
 }
 
+export interface McpServerConfig {
+  command: string
+  args?: string[]
+  /** Values come back as "<hidden>"; sending "<hidden>" keeps the saved value. */
+  env?: Record<string, string>
+  cwd?: string
+  enabled?: boolean
+  tools?: string[]
+  trustAnnotations?: boolean
+  timeoutSecs?: number
+}
+
+export type McpServers = Record<string, McpServerConfig>
+
 export interface InstanceView {
   id: string
   name: string
@@ -15,6 +29,7 @@ export interface InstanceView {
   tunnelId: string
   hasApiKey: true
   toolGroups: string[]
+  mcpServers?: McpServers
   status: Status
 }
 
@@ -31,6 +46,7 @@ export interface InstanceInput {
   tunnelId: string
   apiKey?: string
   toolGroups?: string[]
+  mcpServers?: McpServers
 }
 
 export interface FsListing {

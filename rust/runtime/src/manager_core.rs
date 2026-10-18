@@ -1,8 +1,8 @@
-use crate::{manager_config::{self,InstanceConfig,StoredConfig},tunnel_download};
+use crate::{manager_config::{self,InstanceConfig,StoredConfig},mcp_servers::{self,McpServers},tunnel_download};
 use anyhow::{Context,Result};
 use serde::Serialize;
 use serde_json::{json,Value};
-use std::{collections::{HashMap,VecDeque},path::PathBuf,sync::Arc,time::Duration};
+use std::{collections::{HashMap,HashSet,VecDeque},path::PathBuf,sync::Arc,time::Duration};
 use tokio::{io::{AsyncBufReadExt,BufReader},process::Command,sync::{broadcast,Mutex,oneshot},time::timeout};
 #[derive(Debug,Clone,Serialize)]
 #[serde(rename_all="camelCase")]
@@ -19,11 +19,18 @@ impl Status {
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct InstanceView<'a>{
-    id:&'a str,name:&'a str,workspace_root:&'a str,tunnel_id:&'a str,has_api_key:bool,tool_groups:&'a [String],status:Status
+    id:&'a str,name:&'a str,workspace_root:&'a str,tunnel_id:&'a str,has_api_key:bool,tool_groups:&'a [String],mcp_servers:McpServers,status:Status
 }
-struct Entry{status:Status,logs:VecDeque<String>,generation:u64,stop:Option<oneshot::Sender<()>>,active_worker:bool}
+/// `child_groups`: process groups of the worker's external MCP servers, killed if the worker dies without cleaning up.
+struct Entry{status:Status,logs:VecDeque<String>,generation:u64,stop:Option<oneshot::Sender<()>>,active_worker:bool,child_groups:HashSet<u32>}
 impl Default for Entry {
-    fn default()->Self{Self{status:Status::stopped(),logs:VecDeque::new(),generation:0,stop:None,active_worker:false}}
+    fn default()->Self{Self{status:Status::stopped(),logs:VecDeque::new(),generation:0,stop:None,active_worker:false,child_groups:HashSet::new()}}
+}
+/// Hides the tunnel key and MCP server env secrets from logs and status errors.
+fn redact(inst:&InstanceConfig,message:String)->String{
+    let mut out=if inst.api_key.is_empty(){message}else{message.replace(&inst.api_key,"[REDACTED]")};
+    for secret in mcp_servers::secrets(&inst.mcp_servers){out=out.replace(&secret,"[REDACTED]");}
+    out
 }
 pub struct RuntimeManager{
     pub config_path:PathBuf,
@@ -46,14 +53,14 @@ impl RuntimeManager{
     pub async fn view(&self,config:&InstanceConfig)->Value{
         let entries=self.entries.lock().await;
         let status=entries.get(&config.id).map(|e|e.status.clone()).unwrap_or_else(Status::stopped);
-        serde_json::to_value(InstanceView{id:&config.id,name:&config.name,workspace_root:&config.workspace_root,tunnel_id:&config.tunnel_id,has_api_key:true,tool_groups:&config.tool_groups,status}).unwrap()
+        serde_json::to_value(InstanceView{id:&config.id,name:&config.name,workspace_root:&config.workspace_root,tunnel_id:&config.tunnel_id,has_api_key:true,tool_groups:&config.tool_groups,mcp_servers:mcp_servers::masked(&config.mcp_servers),status}).unwrap()
     }
     pub async fn views(&self)->Vec<Value>{
         let configs=self.config.lock().await.instances.clone();
         let entries=self.entries.lock().await;
         configs.iter().map(|c|{
             let status=entries.get(&c.id).map(|e|e.status.clone()).unwrap_or_else(Status::stopped);
-            json!({"id":c.id,"name":c.name,"workspaceRoot":c.workspace_root,"tunnelId":c.tunnel_id,"hasApiKey":true,"toolGroups":c.tool_groups,"status":status})
+            json!({"id":c.id,"name":c.name,"workspaceRoot":c.workspace_root,"tunnelId":c.tunnel_id,"hasApiKey":true,"toolGroups":c.tool_groups,"mcpServers":mcp_servers::masked(&c.mcp_servers),"status":status})
         }).collect()
     }
     pub async fn announce(&self){self.broadcast(json!({"type":"instances","instances":self.views().await}));}
@@ -85,7 +92,7 @@ impl RuntimeManager{
         self.broadcast(json!({"type":"status","id":id,"status":status}));
     }
     async fn log(&self,inst:&InstanceConfig,message:String){
-        let msg=if inst.api_key.is_empty(){message}else{message.replace(&inst.api_key,"[REDACTED]")};
+        let msg=redact(inst,message);
         let mut entries=self.entries.lock().await;
         let entry=entries.entry(inst.id.clone()).or_default();
         entry.logs.push_back(msg.clone());
@@ -109,7 +116,7 @@ impl RuntimeManager{
         let manager=Arc::clone(self);
         tokio::spawn(async move{
             if let Err(error)=manager.run_worker(inst.clone(),gen).await {
-                manager.status(&inst.id,gen,Status{state:"error".into(),phase:None,url:None,tunnel_ready:false,error:Some(format!("{error:#}").replace(&inst.api_key,"[REDACTED]"))}).await;
+                manager.status(&inst.id,gen,Status{state:"error".into(),phase:None,url:None,tunnel_ready:false,error:Some(redact(&inst,format!("{error:#}")))}).await;
             }
         });
     }
@@ -139,6 +146,7 @@ impl RuntimeManager{
             .env("OPENAI_TUNNEL_ID",&inst.tunnel_id)
             .env("OPENAI_API_KEY",&inst.api_key)
             .env("AI_LOCAL_HUB_TOOL_GROUPS",inst.tool_groups.join(","))
+            .env("AI_LOCAL_HUB_MCP_SERVERS",serde_json::to_string(&mcp_servers::enabled(&inst.mcp_servers))?)
             .env("WORKSPACE_TOOLS_CACHE_DIR",&self.cache_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -180,7 +188,12 @@ impl RuntimeManager{
                                 let entries=manager.entries.lock().await;
                                 entries.get(&c.id).and_then(|e|e.status.url.clone())
                             },tunnel_ready:event["tunnel"]==true,error:None}).await;},
-                            "fatal"=>{if let Some(s)=event["message"].as_str(){manager.status(&c.id,gen,Status{state:"error".into(),phase:None,url:None,tunnel_ready:false,error:Some(s.replace(&c.api_key,"[REDACTED]"))}).await;}},
+                            "child_group"|"child_group_exit"=>{if let Some(pid)=event["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).filter(|p|*p>1){
+                                let mut entries=manager.entries.lock().await;
+                                let groups=&mut entries.entry(c.id.clone()).or_default().child_groups;
+                                if kind=="child_group"{groups.insert(pid);}else{groups.remove(&pid);}
+                            }},
+                            "fatal"=>{if let Some(s)=event["message"].as_str(){manager.status(&c.id,gen,Status{state:"error".into(),phase:None,url:None,tunnel_ready:false,error:Some(redact(&c,s.to_string()))}).await;}},
                             _=>{},
                         }
                         continue;
@@ -212,6 +225,11 @@ impl RuntimeManager{
         let _=reader.await;let _=errors.await;
         let mut entries=self.entries.lock().await;
         let entry=entries.entry(inst.id.clone()).or_default();
+        // A worker that crashed or was killed cannot stop its MCP servers; they run in their own groups.
+        for pid in entry.child_groups.drain(){
+            #[cfg(unix)]{unsafe{libc::kill(-(pid as i32),libc::SIGKILL);}}
+            #[cfg(not(unix))]{let _=pid;}
+        }
         // A stopped process must be fully released before another start is allowed.
         entry.stop=None;
         entry.active_worker=false;

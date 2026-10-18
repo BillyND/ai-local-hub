@@ -138,7 +138,7 @@ async fn api(state:AppState,req:Request<Body>)->Response{
     if kind=="instances" {
         if id.is_none() && method==Method::POST{
             let body=match json_body(req).await{Ok(v)=>v,Err(e)=>return e};
-            let input:InstanceInput=match serde_json::from_value(body){Ok(v)=>v,Err(_)=>return err(StatusCode::BAD_REQUEST,"Invalid request body.")};
+            let input:InstanceInput=match serde_json::from_value(body){Ok(v)=>v,Err(e)=>return err(StatusCode::BAD_REQUEST,format!("Invalid request body: {e}"))};
             let created={
                 let mut config=mgr.config.lock().await;
                 let created=match manager_config::normalize(input,&config.instances,None){Ok(v)=>v,Err(e)=>return err(StatusCode::BAD_REQUEST,e.to_string())};
@@ -153,8 +153,12 @@ async fn api(state:AppState,req:Request<Body>)->Response{
             let current=match mgr.get_instance(id).await{Some(i)=>i,None=>return err(StatusCode::NOT_FOUND,"Instance not found.")};
             if action.is_none() && method==Method::PUT{
                 let body=match json_body(req).await{Ok(v)=>v,Err(e)=>return e};
-                let mut input:InstanceInput=match serde_json::from_value(body){Ok(v)=>v,Err(_)=>return err(StatusCode::BAD_REQUEST,"Invalid request body.")};
+                let mut input:InstanceInput=match serde_json::from_value(body){Ok(v)=>v,Err(e)=>return err(StatusCode::BAD_REQUEST,format!("Invalid request body: {e}"))};
                 if input.api_key.trim().is_empty(){input.api_key=current.api_key.clone();}
+                input.mcp_servers=Some(match input.mcp_servers.take(){
+                    Some(servers)=>crate::mcp_servers::restore_hidden(servers,&current.mcp_servers),
+                    None=>current.mcp_servers.clone(),
+                });
                 let updated={
                     let mut config=mgr.config.lock().await;
                     let others=config.instances.iter().filter(|i|i.id!=id).cloned().collect::<Vec<_>>();

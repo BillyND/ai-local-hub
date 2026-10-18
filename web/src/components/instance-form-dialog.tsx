@@ -5,6 +5,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FolderBrowserDialog } from '@/components/folder-browser-dialog'
+import { McpServersField } from '@/components/mcp-servers-field'
+import { formatMcpServers, parseMcpServers } from '@/lib/mcp-servers'
 import { useShallow } from 'zustand/react/shallow'
 import { submitInstance } from '@/stores/actions'
 import { useManagerStore } from '@/stores/manager-store'
@@ -20,6 +22,7 @@ export function InstanceFormDialog() {
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [toolGroups, setToolGroups] = useState(['core', 'ast', 'lsp', 'ls'])
+  const [mcpServers, setMcpServers] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [browsing, setBrowsing] = useState(false)
@@ -34,6 +37,7 @@ export function InstanceFormDialog() {
     setTunnelId(instance?.tunnelId ?? '')
     setApiKey('')
     setToolGroups(instance?.toolGroups?.length ? instance.toolGroups : ['core', 'ast', 'lsp', 'ls'])
+    setMcpServers(formatMcpServers(instance?.mcpServers))
     setShowKey(false)
     setError(null)
     setPending(false)
@@ -45,7 +49,7 @@ export function InstanceFormDialog() {
     setPending(true)
     setError(null)
     try {
-      await submitInstance({ name: name.trim(), workspaceRoot: workspaceRoot.trim(), tunnelId: tunnelId.trim(), apiKey, toolGroups })
+      await submitInstance({ name: name.trim(), workspaceRoot: workspaceRoot.trim(), tunnelId: tunnelId.trim(), apiKey, toolGroups, mcpServers: parseMcpServers(mcpServers) })
       closeForm()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed')
@@ -57,7 +61,7 @@ export function InstanceFormDialog() {
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => !o && closeForm()}>
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit instance' : 'Add instance'}</DialogTitle>
             <DialogDescription>One instance serves one ChatGPT account through its own OpenAI tunnel.</DialogDescription>
@@ -113,6 +117,7 @@ export function InstanceFormDialog() {
                 ))}
               </div>
             </fieldset>
+            <McpServersField value={mcpServers} onChange={setMcpServers} />
             {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={closeForm}>Cancel</Button>

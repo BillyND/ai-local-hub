@@ -2,7 +2,8 @@
 //! Workspace is a working directory, not a sandbox: absolute paths are intentionally allowed.
 use pi_edit::EditStore;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use rmcp::{handler::server::{router::tool::ToolRouter, wrapper::Parameters}, model::{CallToolResult, ContentBlock, InitializeRequestParams, InitializeResult}, schemars::JsonSchema, service::RequestContext, tool, tool_handler, tool_router, ErrorData, RoleServer, ServerHandler};
+use rmcp::{handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters}, model::{CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion, ResultType, Tool}, schemars::JsonSchema, service::RequestContext, tool, tool_handler, tool_router, ErrorData, RoleServer, ServerHandler};
+use crate::gateway::Gateway;
 use serde::Deserialize;
 use crate::tool_log::{brief,traced,traced_async};
 use tokio_util::sync::CancellationToken;
@@ -55,7 +56,7 @@ static SCANS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
 /// `wait` returns a still-running snapshot after this long (omp allows 30 min; MCP clients time out sooner).
 const WAIT_CAP_SECS: u64 = 50;
 
-fn shell_path() -> Option<std::ffi::OsString> {
+pub(crate) fn shell_path() -> Option<std::ffi::OsString> {
     let original = std::env::var_os("PATH").unwrap_or_default();
     if !cfg!(target_os="macos") { return Some(original); }
     let mut paths = std::env::split_paths(&original).collect::<Vec<_>>();
@@ -84,7 +85,7 @@ impl Drop for SessionEnd {
 }
 
 #[derive(Clone)]
-pub struct CodingTools {root:PathBuf, groups:tool_groups::ToolGroups, process_limit: Arc<Semaphore>, store: EditStore, artifacts: Arc<artifacts::Artifacts>, jobs: Arc<bash_jobs::Jobs>, pending: Arc<ast_edit_tool::PendingList>, lsp: Arc<lsp_pool::Pool>, _session: Arc<SessionEnd>}
+pub struct CodingTools {root:PathBuf, groups:tool_groups::ToolGroups, gateway: Arc<Gateway>, process_limit: Arc<Semaphore>, store: EditStore, artifacts: Arc<artifacts::Artifacts>, jobs: Arc<bash_jobs::Jobs>, pending: Arc<ast_edit_tool::PendingList>, lsp: Arc<lsp_pool::Pool>, _session: Arc<SessionEnd>}
 impl CodingTools {
     pub fn new(root:PathBuf)->Self { Self::with_groups(root, tool_groups::ToolGroups::default()) }
     pub fn from_env(root:PathBuf)->Result<Self,String> { Ok(Self::with_groups(root, tool_groups::ToolGroups::from_env()?)) }
@@ -93,10 +94,12 @@ impl CodingTools {
         let (jobs,lsp)=(Arc::new(bash_jobs::Jobs::default()),lsp_pool::Pool::shared());
         lsp.session_started();
         let session=Arc::new(SessionEnd{jobs:Arc::clone(&jobs),lsp:Arc::clone(&lsp),initialized:Default::default()});
-        Self { root, groups, process_limit: Arc::clone(&PROCESS_LIMIT), store: EditStore::new(), artifacts: Arc::new(artifacts::Artifacts::new()), _session: session, jobs, pending: Arc::new(Default::default()), lsp }
+        Self { root, groups, gateway: Gateway::empty(), process_limit: Arc::clone(&PROCESS_LIMIT), store: EditStore::new(), artifacts: Arc::new(artifacts::Artifacts::new()), _session: session, jobs, pending: Arc::new(Default::default()), lsp }
     }
     /// Extract PDFs in child processes of `exe`, which must route `PDF_WORKER_FLAG` to `pdf_worker_main`.
     pub fn enable_pdf_worker(exe:PathBuf) { read_document::use_pdf_worker(exe) }
+    /// Adds the tools of the instance's external MCP servers.
+    pub fn with_gateway(mut self, gateway:Arc<Gateway>)->Self { self.gateway=gateway; self }
     /// Runtime shutdown: stops running tool bodies at their next check, asks language servers to exit, then
     /// stops every child process group still running.
     pub async fn shutdown_children() {
@@ -125,7 +128,9 @@ impl CodingTools {
         router
     }
     pub fn tool_names()->Vec<String> { Self::new(PathBuf::from(".")).tool_names_for_instance() }
-    pub fn tool_names_for_instance(&self)->Vec<String> { self.filtered_router().list_all().into_iter().map(|t|t.name.to_string()).collect() }
+    pub fn tool_names_for_instance(&self)->Vec<String> { self.all_tools().into_iter().map(|t|t.name.to_string()).collect() }
+    /// Native tools (sorted), then the tools of external MCP servers.
+    fn all_tools(&self)->Vec<Tool> { let mut tools=self.filtered_router().list_all(); tools.extend(self.gateway.tools()); tools }
     fn path(&self,p:&str)->PathBuf {let p=Path::new(p); if p.is_absolute(){p.to_path_buf()} else {self.root.join(p)}}
     /// Appends settled background-job results to this tool's result (MCP has no server-initiated turns).
     fn deliver(&self,mut r:CallToolResult)->CallToolResult {
@@ -344,6 +349,23 @@ impl ServerHandler for CodingTools {
         context.peer.set_peer_info(request.clone());
         self.negotiate_initialize(&request)
     }
+    async fn call_tool(&self, request:CallToolRequestParams, context:RequestContext<RoleServer>)->Result<CallToolResponse,ErrorData> {
+        let router=self.filtered_router();
+        if !router.has_route(&request.name) && self.gateway.tool(&request.name).is_some() {
+            let name=request.name.to_string();
+            let cancel=context.ct.clone().cancelled_owned();
+            let result=traced_async(&name,json!({}),async {
+                self.gateway.call(&name,request.arguments,cancel).await.unwrap_or_else(||err(format!("Tool '{name}' is no longer available")))
+            }).await;
+            return Ok(self.deliver(result).into());
+        }
+        router.call(ToolCallContext::new(self,request,context)).await
+    }
+    async fn list_tools(&self, _request:Option<PaginatedRequestParams>, context:RequestContext<RoleServer>)->Result<ListToolsResult,ErrorData> {
+        let hints=context.protocol_version().is_some_and(|v|v>=ProtocolVersion::V_2026_07_28);
+        Ok(ListToolsResult{result_type:Some(ResultType::COMPLETE),tools:self.all_tools(),meta:None,next_cursor:None,ttl_ms:hints.then_some(0),cache_scope:hints.then_some(CacheScope::Public)})
+    }
+    fn get_tool(&self, name:&str)->Option<Tool> { self.filtered_router().get(name).cloned().or_else(||self.gateway.tool(name)) }
 }
 #[cfg(test)]
 mod tests {

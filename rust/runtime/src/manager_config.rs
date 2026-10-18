@@ -1,17 +1,20 @@
 use anyhow::{bail,Context,Result};
 use serde::{Deserialize,Serialize};
 use std::{env,fs,path::{Path,PathBuf}};
+use crate::mcp_servers::{self,McpServers};
 use uuid::Uuid;
 fn default_tool_groups()->Vec<String>{vec!["core".into(),"ast".into(),"lsp".into(),"ls".into()]}
 #[derive(Debug,Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct InstanceConfig {pub id:String,pub name:String,pub workspace_root:String,pub tunnel_id:String,pub api_key:String,#[serde(default = "default_tool_groups")]pub tool_groups:Vec<String>}
+pub struct InstanceConfig {pub id:String,pub name:String,pub workspace_root:String,pub tunnel_id:String,pub api_key:String,#[serde(default = "default_tool_groups")]pub tool_groups:Vec<String>,#[serde(default,skip_serializing_if="McpServers::is_empty")]pub mcp_servers:McpServers}
 #[derive(Debug,Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct StoredConfig {pub version:u8,pub cache_dir:String,pub instances:Vec<InstanceConfig>}
 #[derive(Debug,Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct InstanceInput {pub name:String,pub workspace_root:String,pub tunnel_id:String,#[serde(default)]pub api_key:String,#[serde(default = "default_tool_groups")]pub tool_groups:Vec<String>}
+pub struct InstanceInput {pub name:String,pub workspace_root:String,pub tunnel_id:String,#[serde(default)]pub api_key:String,#[serde(default = "default_tool_groups")]pub tool_groups:Vec<String>,
+    /// `None` keeps the saved servers on update (older clients do not send the field).
+    #[serde(default)]pub mcp_servers:Option<McpServers>}
 pub fn home()->PathBuf{dirs::home_dir().unwrap_or_else(||PathBuf::from("."))}
 fn expand(s:&str)->PathBuf {
     if s=="~"{home()} else if let Some(s)=s.strip_prefix("~/"){home().join(s)}else{PathBuf::from(s)}
@@ -36,12 +39,15 @@ pub fn load(path:&Path)->Result<StoredConfig>{
         let key=val["openaiApiKey"].as_str().context("Invalid legacy key")?;
         let workspace=val["workspaceRoot"].as_str().context("Invalid legacy workspaceRoot")?;
         let cache=val["cacheDir"].as_str().context("Invalid legacy cacheDir")?;
-        StoredConfig{version:2,cache_dir:cache.into(),instances:if key.is_empty()||tunnel.is_empty(){vec![]}else{vec![InstanceConfig{id:"default".into(),name:"default".into(),workspace_root:workspace.into(),tunnel_id:tunnel.into(),api_key:key.into(),tool_groups:default_tool_groups()}]}}
+        StoredConfig{version:2,cache_dir:cache.into(),instances:if key.is_empty()||tunnel.is_empty(){vec![]}else{vec![InstanceConfig{id:"default".into(),name:"default".into(),workspace_root:workspace.into(),tunnel_id:tunnel.into(),api_key:key.into(),tool_groups:default_tool_groups(),mcp_servers:McpServers::new()}]}}
     }else{
         serde_json::from_value(val).context("Invalid config structure")?
     };
     if config.version!=2 {bail!("Unsupported saved config version");}
-    for instance in &mut config.instances { instance.tool_groups=canonical_tool_groups(std::mem::take(&mut instance.tool_groups)).with_context(||format!("Invalid toolGroups for instance {}",instance.name))?; }
+    for instance in &mut config.instances {
+        instance.tool_groups=canonical_tool_groups(std::mem::take(&mut instance.tool_groups)).with_context(||format!("Invalid toolGroups for instance {}",instance.name))?;
+        instance.mcp_servers=mcp_servers::normalize(std::mem::take(&mut instance.mcp_servers)).with_context(||format!("Invalid mcpServers for instance {}",instance.name))?;
+    }
     #[cfg(unix)]{use std::os::unix::fs::PermissionsExt;fs::set_permissions(path,fs::Permissions::from_mode(0o600))?;}
     Ok(config)
 }
@@ -75,7 +81,8 @@ pub fn normalize(input:InstanceInput,others:&[InstanceConfig],existing_id:Option
     let workspace=workspace.canonicalize().with_context(||format!("Workspace folder must be an existing directory: {}",workspace.display()))?;
     if !workspace.is_dir(){bail!("Workspace folder must be an existing directory");}
     let tool_groups=canonical_tool_groups(input.tool_groups)?;
-    Ok(InstanceConfig{id:existing_id.map(str::to_string).unwrap_or_else(||Uuid::new_v4().to_string()[..8].into()),name,workspace_root:workspace.to_string_lossy().into_owned(),tunnel_id,api_key,tool_groups})
+    let mcp_servers=mcp_servers::normalize(input.mcp_servers.unwrap_or_default())?;
+    Ok(InstanceConfig{id:existing_id.map(str::to_string).unwrap_or_else(||Uuid::new_v4().to_string()[..8].into()),name,workspace_root:workspace.to_string_lossy().into_owned(),tunnel_id,api_key,tool_groups,mcp_servers})
 }
 #[cfg(test)]
 mod tests{
@@ -102,9 +109,9 @@ mod tests{
         fs::remove_dir_all(folder).unwrap();
     }
     #[test] fn invalid_duplicate_and_folder(){
-        let i=InstanceInput{name:" alpha ".into(),workspace_root:".".into(),tunnel_id:"tunnel".into(),api_key:"key".into(),tool_groups:default_tool_groups()};
+        let i=InstanceInput{name:" alpha ".into(),workspace_root:".".into(),tunnel_id:"tunnel".into(),api_key:"key".into(),tool_groups:default_tool_groups(),mcp_servers:None};
         let one=normalize(i, &[],None).unwrap();
-        let two=InstanceInput{name:"ALPHA".into(),workspace_root:".".into(),tunnel_id:"other".into(),api_key:"key".into(),tool_groups:default_tool_groups()};
+        let two=InstanceInput{name:"ALPHA".into(),workspace_root:".".into(),tunnel_id:"other".into(),api_key:"key".into(),tool_groups:default_tool_groups(),mcp_servers:None};
         assert!(normalize(two,&[one],None).is_err());
     }
 }

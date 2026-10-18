@@ -90,6 +90,39 @@ Relative paths use the configured workspace as the working directory. **It is no
 
 This is a **native implementation** with equivalent tool categories; not a byte-for-byte implementation of the Pi SDK. Some less-common Pi behavior (for example automatic image resizing, shell progress notifications, certain output formatting and concurrency semantics) still needs parity testing before treating the migration as fully equivalent. See [migration status](docs/RUST-MIGRATION.md).
 
+## External MCP servers (gateway)
+
+Each instance can also run external **stdio** MCP servers (for example a browser, desktop or database server) and re-expose their tools through the same local MCP endpoint and tunnel, so one ChatGPT connector covers everything. Paste the usual `mcpServers` JSON into **External MCP servers** in the instance form:
+
+```json
+{
+  "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] },
+  "db": { "command": "uvx", "args": ["mcp-server-sqlite", "--db-path", "data.db"], "tools": ["read_query", "list_tables"], "trustAnnotations": true }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `command`, `args`, `env` | How to start the server. `npx`, `uvx` and Homebrew paths are found even when the app was launched from the GUI. |
+| `cwd` | Working directory; relative paths resolve against the workspace (default: the workspace). |
+| `enabled` | `false` keeps the definition without starting it (`"disabled": true` is accepted too). |
+| `tools` | Allowlist of upstream tool names; empty exposes every tool. |
+| `trustAnnotations` | Pass the server's own read-only/destructive hints to ChatGPT. By default every external tool is marked write + destructive + open-world so ChatGPT asks before each call. |
+| `timeoutSecs` | Per-call limit, 5-110 seconds (default 90); the OpenAI tunnel cuts any request at 120 seconds. |
+
+Behavior:
+
+- Tools appear as `<server>__<tool>` (for example `playwright__browser_click`); names are sanitized and kept within 64 characters. Descriptions are prefixed with `[server]`.
+- Servers start once per instance and are shared by every ChatGPT session, so state such as an open browser survives between chats. The instance waits up to 30 seconds for servers at startup; slower ones are added when ready (refresh the connector in ChatGPT).
+- A crashed server restarts automatically with backoff (1 to 60 seconds); its tools stay listed and calls return a clear error until it is back. A server that fails to start does not stop the instance.
+- Calls past `timeoutSecs` and calls cancelled by ChatGPT send an MCP cancellation upstream. Results larger than the tunnel allows are trimmed with a notice instead of failing.
+- Each server runs in its own process group; stopping the instance (also while a server is still starting) terminates the whole group, because wrappers such as `npx` leave grandchildren otherwise. If the worker itself crashes or is killed, the manager kills the groups it reported. On Windows the server's process tree is ended with `taskkill /T`. Server stderr appears in the instance logs as `[mcp:<server>] ...`.
+- Env values are write-only: the API and UI show `<hidden>`, and sending `<hidden>` back keeps the saved value. They are removed from the worker environment before any tool runs and redacted from logs. **Put credentials in `env`, never in `args`, `command` or `cwd`**: those are shown as entered and are not redacted (for example pass a database URL through an env variable the server reads).
+- Server names use letters, digits, `-` and `_`, start and end with a letter or digit, and cannot contain `__`.
+- Only stdio servers are supported (no HTTP/SSE upstreams, OAuth, resources or prompts). The whole server list travels to the worker in one environment variable, so keep large values (certificates, long JSON) in files the server reads. A saved config with an invalid server stops the manager from loading it, like an invalid `toolGroups` value; fix it in the UI or in `config.json`. Older app versions ignore and drop `mcpServers` when they save.
+
+Changing servers requires restarting the instance and refreshing the connector in ChatGPT.
+
 ## Configuration, privacy and security
 
 Existing saved settings and legacy environment variables remain supported:
@@ -126,6 +159,8 @@ rust/runtime/
   src/main.rs                      # native MCP worker
   src/tools.rs                     # Rust coding tools
   src/tunnel*.rs                   # official tunnel-client orchestration and verification
+  src/mcp_servers.rs               # external MCP server config, validation and secret masking
+  src/gateway.rs, src/gateway/     # external MCP server supervision and tool forwarding
   tests/                           # end-to-end tests from a real MCP SDK client
 desktop/src-tauri/                 # Tauri 2 native desktop shell
 web/                               # React UI and static assets

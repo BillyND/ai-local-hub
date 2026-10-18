@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {mkdtemp,readFile,rm,chmod,mkdir} from "node:fs/promises";
+import {mkdtemp,readFile,rm,chmod,mkdir,realpath} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join,resolve} from "node:path";
 import {Client} from "@modelcontextprotocol/sdk/client/index.js";
@@ -94,9 +94,23 @@ try {
  } finally{await client.close();}
  // Two instances must remain independently accessible and stoppable.
  const otherRoot=join(root,"second");await mkdir(otherRoot);
-const second=await api("POST","/instances",{name:"second",workspaceRoot:otherRoot,tunnelId:"demo2",apiKey:"sk-for-second",toolGroups:["core"]});
+const fixture=resolve("rust/runtime/tests/fixtures/fake-mcp-server.mjs");
+const mcpSecret="tok-manager-secret";
+const mcpServers={fake:{command:process.execPath,args:[fixture],env:{FAKE_TOKEN:mcpSecret},tools:["echo","whoami"]}};
+const second=await api("POST","/instances",{name:"second",workspaceRoot:otherRoot,tunnelId:"demo2",apiKey:"sk-for-second",toolGroups:["core"],mcpServers});
 assert.equal(second.status,201);
 assert.deepEqual(second.data.toolGroups,["core"]);
+// MCP server env values are write-only: masked in every response, kept on disk, kept when sent back masked.
+assert.equal(second.data.mcpServers.fake.env.FAKE_TOKEN,"<hidden>");
+assert.ok(!second.raw.includes(mcpSecret));
+assert.ok(!(await api("GET","/state")).raw.includes(mcpSecret));
+assert.ok((await readFile(join(root,"config.json"),"utf8")).includes(mcpSecret));
+const invalid=await api("POST","/instances",{name:"bad-mcp",workspaceRoot:otherRoot,tunnelId:"demo3",apiKey:"k",mcpServers:{"a__b":{command:"x"}}});
+assert.equal(invalid.status,400);
+assert.match(invalid.data.error,/must be 1-32 letters/);
+const malformed=await api("POST","/instances",{name:"bad-mcp",workspaceRoot:otherRoot,tunnelId:"demo3",apiKey:"k",mcpServers:{a:{args:[]}}});
+assert.equal(malformed.status,400);
+assert.match(malformed.data.error,/^Invalid request body: .*command/);
 const secondId=second.data.id;
  assert.equal((await api("POST",`/instances/${secondId}/start`,{})).status,200);
  const secondView=await waitFor(async()=>{
@@ -105,14 +119,29 @@ const secondId=second.data.id;
    return second?.status.state==="running"?second:null;
  },"second worker running");
 const secondClient=new Client({name:"second-worker-smoke",version:"1"});
+let secondFake;
 try{
   await secondClient.connect(new StreamableHTTPClientTransport(new URL(secondView.status.url)));
-  const secondTools=(await secondClient.listTools()).tools.map((tool)=>tool.name).sort();
-  assert.deepEqual(secondTools,["bash","edit","glob","grep","kill_job","read","wait","write"]);
+  const secondTools=(await secondClient.listTools()).tools.map((tool)=>tool.name);
+  assert.deepEqual(secondTools.filter(n=>!n.includes("__")).sort(),["bash","edit","glob","grep","kill_job","read","wait","write"]);
+  assert.deepEqual(secondTools.filter(n=>n.includes("__")),["fake__echo","fake__whoami"]);
+  const who=JSON.parse((await secondClient.callTool({name:"fake__whoami",arguments:{}})).content[0].text);
+  assert.equal(who.token,mcpSecret);
+  assert.equal(who.cwd,await realpath(otherRoot));
+  secondFake=who;
   assert.notEqual((await secondClient.callTool({name:"write",arguments:{path:"isolated.txt",content:"second only"}})).isError,true);
   assert.equal(await readFile(join(otherRoot,"isolated.txt"),"utf8"),"second only");
   await assert.rejects(() => secondClient.callTool({name:"lsp",arguments:{action:"status"}}), /tool not found|Method not found|Invalid params/);
 }finally{await secondClient.close();}
+ const resent=await api("PUT",`/instances/${secondId}`,{name:"second",workspaceRoot:otherRoot,tunnelId:"demo2",toolGroups:["core"],mcpServers:{fake:{...mcpServers.fake,env:{FAKE_TOKEN:"<hidden>"},timeoutSecs:30}}});
+ assert.equal(resent.status,200);
+ assert.equal(resent.data.mcpServers.fake.timeoutSecs,30);
+ assert.ok((await readFile(join(root,"config.json"),"utf8")).includes(mcpSecret),"masked value replaced the saved secret");
+ const omitted=await api("PUT",`/instances/${secondId}`,{name:"second",workspaceRoot:otherRoot,tunnelId:"demo2",toolGroups:["core"]});
+ assert.deepEqual(Object.keys(omitted.data.mcpServers),["fake"],"older clients that omit mcpServers must not erase them");
+ const secondLogs=(await api("GET",`/instances/${secondId}/logs`)).data.lines;
+ assert.ok(secondLogs.some(l=>l==="[mcp:fake] token [REDACTED]"),"upstream stderr is forwarded with secrets redacted");
+ assert.ok(!secondLogs.some(l=>l.includes(mcpSecret)));
  // Every tool call must leave one structured line in the instance Logs panel.
  const logs=await api("GET",`/instances/${id}/logs`);
  assert.equal(logs.status,200);
@@ -128,6 +157,15 @@ try{
  await waitFor(async()=>(await api("GET","/state")).data.instances.find(i=>i.id===id).status.state==="stopped","stop first worker");
  await waitFor(async()=>!alive(jobPid),"background job stopped with its instance");
  assert.equal((await api("GET","/state")).data.instances.find(i=>i.id===secondId).status.state,"running");
+ if(process.platform!=="win32"){
+   // A worker killed outright cannot stop its MCP servers; the manager kills their process groups instead.
+   const alive=pid=>{try{process.kill(pid,0);return true}catch{return false}};
+   const workerPid=Number(await new Promise(r=>{let o="";const p=spawn("ps",["-o","ppid=","-p",String(secondFake.pid)]);p.stdout.on("data",c=>o+=c);p.on("close",()=>r(o.trim()))}));
+   assert.ok(workerPid>1,"worker pid of the MCP server");
+   process.kill(workerPid,"SIGKILL");
+   await waitFor(async()=>(await api("GET","/state")).data.instances.find(i=>i.id===secondId).status.state==="error","killed worker reported");
+   await waitFor(async()=>!alive(secondFake.pid)&&!alive(secondFake.grandchild),"MCP server group outlived a killed worker");
+ }
  assert.equal((await api("POST",`/instances/${secondId}/stop`,{})).status,200);
  await waitFor(async()=>(await api("GET","/state")).data.instances.find(i=>i.id===secondId).status.state==="stopped","stop second worker");
  assert.equal((await api("DELETE",`/instances/${secondId}`)).status,204);
