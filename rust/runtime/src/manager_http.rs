@@ -9,8 +9,10 @@ use axum::{
     routing::any,Json,Router,
 };
 use serde_json::{json,Value};
-use std::{path::{Path,PathBuf},sync::Arc,time::Duration};
+use std::{future::IntoFuture,path::{Path,PathBuf},sync::Arc,time::Duration};
 use tokio::{net::TcpListener,sync::{watch,Notify}};
+/// Connections still open this long after shutdown began are dropped, so a stuck client cannot hold Quit.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 #[derive(Clone)]
 struct AppState {
     manager:Arc<RuntimeManager>,
@@ -127,7 +129,11 @@ async fn api(state:AppState,req:Request<Body>)->Response{
     if method==Method::GET && kind=="fs" && id.is_none(){
         let requested=req.uri().query().and_then(|q|url::form_urlencoded::parse(q.as_bytes()).find(|(k,_)|k=="path").map(|(_,v)|v.into_owned()))
             .unwrap_or_else(||manager_config::home().to_string_lossy().into_owned());
-        return match folder_listing(&requested){Ok(v)=>Json(v).into_response(),Err(e)=>err(StatusCode::BAD_REQUEST,e.to_string())};
+        // A large or slow (network) folder must not stall the server's async workers.
+        return match tokio::task::spawn_blocking(move||folder_listing(&requested)).await{
+            Ok(Ok(v))=>Json(v).into_response(),Ok(Err(e))=>err(StatusCode::BAD_REQUEST,e.to_string()),
+            Err(_)=>err(StatusCode::INTERNAL_SERVER_ERROR,"Folder listing failed."),
+        };
     }
     if kind=="instances" {
         if id.is_none() && method==Method::POST{
@@ -229,12 +235,17 @@ pub async fn listen(manager:Arc<RuntimeManager>,web_dir:PathBuf,token:String,pre
         Ok(l)=>l,Err(_error)if !strict=>TcpListener::bind(("127.0.0.1",0)).await?,Err(e)=>return Err(e.into())};
     let port=listener.local_addr()?.port();
     let (close_streams,closing)=watch::channel(false);
-    let state=AppState{manager,web_dir,token,port,desktop,shutdown:Arc::clone(&shutdown),closing};
+    let state=AppState{manager,web_dir,token,port,desktop,shutdown:Arc::clone(&shutdown),closing:closing.clone()};
     let app=Router::new().fallback(any(app)).with_state(state);
     let future=async move {
-        axum::serve(listener,app)
-            .with_graceful_shutdown(async move {shutdown.notified().await;let _=close_streams.send(true);})
-            .await.context("HTTP server failed")
+        let server=axum::serve(listener,app)
+            .with_graceful_shutdown(async move {shutdown.notified().await;let _=close_streams.send(true);});
+        let mut closing=closing;
+        tokio::select!{
+            result=server.into_future()=>result.context("HTTP server failed"),
+            // Any other connection still open after the grace period is dropped instead of holding Quit.
+            _=async {let _=closing.wait_for(|closed|*closed).await;tokio::time::sleep(SHUTDOWN_GRACE).await;}=>Ok(()),
+        }
     };
     Ok((port,future))
 }

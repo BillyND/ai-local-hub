@@ -41,13 +41,33 @@ fn verify(dir:&Path,version:&str,platform:&str,arch:&str,asset:&str,exe:&str)->O
     if raw.is_empty()||hash(&raw)!=m.binary_sha256{return None;}
     Some(bin)
 }
+/// Newest verified binary already in the cache: lets instances start while GitHub is unreachable.
+fn newest_cached(cache_dir:&Path,platform:&str,arch:&str,exe:&str)->Option<PathBuf>{
+    let mut best:Option<(std::time::SystemTime,PathBuf)>=None;
+    for entry in fs::read_dir(cache_dir.join("tunnel-client")).ok()?.flatten(){
+        let version=entry.file_name().to_string_lossy().into_owned();
+        let dir=entry.path().join(format!("{platform}-{arch}"));
+        let asset=format!("tunnel-client-{version}-{platform}-{arch}.zip");
+        let Some(bin)=verify(&dir,&version,platform,arch,&asset,exe) else {continue};
+        let at=fs::metadata(dir.join("manifest.json")).and_then(|m|m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        if best.as_ref().is_none_or(|(t,_)|at>*t){best=Some((at,bin));}
+    }
+    best.map(|(_,p)|p)
+}
 pub async fn ensure(cache_dir:&Path)->Result<PathBuf>{
     let (platform,arch,exe)=target()?;
     let client=reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(45))
         .user_agent("AI-Local-Hub/0.1").build()?;
-    let release:Release=client.get("https://api.github.com/repos/openai/tunnel-client/releases/latest")
-        .send().await?.error_for_status()?.json().await?;
+    let latest=async{
+        client.get("https://api.github.com/repos/openai/tunnel-client/releases/latest")
+            .timeout(std::time::Duration::from_secs(10))
+            .send().await?.error_for_status()?.json::<Release>().await
+    };
+    let release=match latest.await{
+        Ok(r)=>r,
+        Err(e)=>return newest_cached(cache_dir,platform,arch,exe).ok_or_else(||anyhow::Error::new(e).context("Checking the latest tunnel-client release")),
+    };
     let version=&release.tag_name;
     let valid=regex::Regex::new(r"^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$")?;
     if !valid.is_match(version){bail!("Invalid tunnel-client release tag");}

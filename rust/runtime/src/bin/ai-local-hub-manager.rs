@@ -47,6 +47,20 @@ fn open_url(link:&str){
     else if cfg!(windows){Command::new("cmd").args(["/C","start","",link]).spawn()}
     else {Command::new("xdg-open").arg(link).spawn()};
 }
+/// Resolves on the first Ctrl+C or SIGTERM. A second Ctrl+C after that exits at once instead of waiting
+/// for the clean shutdown; workers notice their closed stdin and stop on their own.
+async fn stop_requested(){
+    #[cfg(unix)]
+    let term=async{match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()){Ok(mut s)=>{s.recv().await;},Err(_)=>std::future::pending().await}};
+    #[cfg(not(unix))]
+    let term=std::future::pending::<()>();
+    tokio::select!{_=tokio::signal::ctrl_c()=>{},()=term=>{}}
+    tokio::spawn(async{
+        let _=tokio::signal::ctrl_c().await;
+        eprintln!("[ai-local-hub-rust] forced exit");
+        std::process::exit(130);
+    });
+}
 fn read_lock(path:&Path)->Option<Lock>{
     serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
@@ -93,7 +107,7 @@ async fn run()->Result<()>{
         let events=tokio::spawn(async move{
             while let Ok(event)=rx.recv().await{eprintln!("{event}");}
         });
-        tokio::signal::ctrl_c().await?;
+        stop_requested().await;
         manager.wait_stopped().await;
         events.abort();
         return Ok(());
@@ -138,7 +152,7 @@ async fn run()->Result<()>{
         if open{open_url(&link);}
     }
     let cancel=Arc::clone(&shutdown);
-    tokio::spawn(async move{let _=tokio::signal::ctrl_c().await;cancel.notify_one();});
+    tokio::spawn(async move{stop_requested().await;cancel.notify_one();});
     let outcome=handle.await?;
     manager.wait_stopped().await;
     release(&lock_path,&token);
